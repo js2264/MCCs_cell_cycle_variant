@@ -1,0 +1,1119 @@
+---
+title: "scRNAseq_MCCs_paper-figures"
+date: "2022-02-03"
+author: Jacques SERIZAY
+output:
+    html_document:
+        theme: flatly
+        highlight: tango
+        preserve_yaml: true
+        code_folding: show
+        df_print: tibble
+        toc: true
+        toc_float: true
+path: /home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures
+---
+
+```{r, include=FALSE}
+setwd('/home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures')
+require(tidyverse)
+require(magrittr)
+require(SingleCellExperiment)
+require(scater)
+require(scran)
+```
+
+### Plot cyc/deuts as UMAPs, colored by annot/pseudotime/CC
+
+```{r embedding 1}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+WTs$pseudotime <- WTs$pseudotime_slingshot
+WTs_sub <- WTs[, !is.na(WTs$pseudotime_slingshot) & WTs$annotation != 'Unannot']
+WTs_tradeSeq <- readRDS('/home/rsg/Projects/20210419_MCCs_WTs-figures/results/WTs_tradeSeq.rds')
+WTs_velo <- readRDS('~/Projects/20210427_velocyto-mouse/results/WTs-velocyto.rds')
+friendly_cols <- c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")
+reggenes <- readRDS('/home/rsg/Projects/20211102_scRNAseq_MCCs_reprocessing-cycle-pseudocycle/results/WTs_genes-regulated-during-differentiation.rds')
+CellCyclePhase_hNSCs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/CellCyclePhase_hNSCs.rds')
+labels <- c(
+    'Neural G0' = 'G0', 
+    'G1' = 'G1', 
+    'G1/other' = 'G1', 
+    'Late G1' = 'G1', 
+    'S' = 'S', 
+    'S/G2' = 'S/G2', 
+    'G2/M' = 'G2/M', 
+    'M/Early G1' = 'M'
+)
+WTs$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(WTs$Barcode, CellCyclePhase_hNSCs$Barcode)]
+WTs$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(WTs$CellCyclePhase_hNSCs)], unique(labels))
+rotateMatrix <- function(x, theta) {
+    rotate <- matrix(c(cos(theta), sin(theta), -sin(theta), cos(theta)), ncol = 2)
+    newx <- t(rotate %*% (t(x)))
+    colnames(newx) <- colnames(x)
+    rownames(newx) <- rownames(x)
+    newx
+}
+
+gprofiler2::set_base_url('https://biit.cs.ut.ee/gprofiler_archive3/e103_eg50_p15')
+cycling_genes <- gprofiler2::gconvert('GO:0007049', 'mmusculus')$name #GO cell cycle
+cycling_genes <- cycling_genes[cycling_genes %in% rownames(WTs)]
+cycling_genes <- cycling_genes[!rowData(WTs[cycling_genes,])$isRibo & !rowData(WTs[cycling_genes,])$isMito]
+
+# ---------- Re-merge cycling cells
+set.seed(1000)
+sub <- !is.na(colData(WTs)$pseudotime) & colData(WTs)$annotation != 'Unannot' & colData(WTs)$annotation == 'CyclingProgenitors'
+cyc <- batchelor::fastMNN(
+    WTs[, sub], 
+    batch = WTs$batch[sub], 
+    d = 50, k = 20, 
+    subset.row = cycling_genes, 
+    correct.all = TRUE,
+    BSPARAM = BiocSingular::RandomParam(deferred = TRUE)
+)
+
+# ---------- Add more annotations back to cyc SCE
+colData(cyc) <- colData(WTs[, sub])
+cyc$original_cluster <- cyc$annotation
+attr(reducedDim(cyc, 'corrected'), 'weights') <- rowData(cyc)$rotation
+rowData(cyc) <- rowData(WTs)[, c("ID", "Symbol", "Type", "chr", "gene_biotype", "isMito", "isRibo")]
+
+# ---------- Add initial counts
+assay(cyc, 'counts') <- counts(WTs[, sub])
+assay(cyc, 'logcounts') <- logcounts(WTs[, sub])
+
+# ---------- Reduce dims
+set.seed(1000)
+cyc <- runTSNE(cyc, dimred = "corrected")
+set.seed(2000)
+cyc <- runUMAP(cyc, dimred = "corrected")
+set.seed(1000)
+graph <- buildSNNGraph(cyc, use.dimred = "corrected", k = 3, type = 'jaccard')
+reducedDim(cyc, "force") <- igraph::layout_with_fr(graph)
+
+# ---------- Rotating 
+reducedDim(cyc, 'rotated') <- reducedDim(cyc, 'corrected')[, 1:2]
+reducedDim(cyc, 'rotated') <- rotateMatrix(reducedDim(cyc, 'rotated'), pi*(-0.65))
+reducedDim(cyc, 'rotated')[,1] <- reducedDim(cyc, 'rotated')[,1] + 0.065
+reducedDim(cyc, 'rotated')[,2] <- reducedDim(cyc, 'rotated')[,2] - 0.070
+# reducedDim(cyc, 'rotated') <- reducedDim(cyc, 'corrected')[, 1:2]
+
+# ---------- Defining angular progression pseudotime
+thetas <- apply(reducedDim(cyc, 'rotated')[,1:2], 1, function(row) {
+    an <- atan((row[2]) / (row[1]))
+    if (row[1] > 0 & row[2] > 0) {# First quarter
+        an <- an
+    }
+    else if (row[1] <= 0 & row[2] > 0) {# Second quarter
+        an <- pi + an
+    }
+    else if (row[1] <= 0 & row[2] <= 0) {# Third quarter
+        an <- pi + an
+    }
+    else if (row[1] > 0 & row[2] <= 0) {# Fourth quarter
+        an <- 2*pi + an
+    }
+    return(an)
+})
+thetas <- sapply(thetas, function(theta) ifelse(theta < pi/2, theta+2*pi, theta)) %>% scales::rescale(c(0, 2*pi))
+cyc$pseudotime_angular <- -thetas + 2*pi
+
+# ----------- Compute spline 
+d <- reducedDim(cyc, 'rotated') %>% 
+    as_tibble() %>% 
+    setNames(c('x', 'y')) %>%
+    mutate(
+        angular_pseudotime = cyc$pseudotime_angular, 
+        angular_pseudotime_binned = cut(angular_pseudotime, breaks = seq(0, 2*pi, length.out = 13), include.lowest = TRUE)
+    ) %>% 
+    group_by(angular_pseudotime_binned) %>% 
+    summarize(mean_x = mean(x), mean_y = mean(y))
+pdf(tempfile())
+plot(reducedDim(cyc, 'rotated')[,1], reducedDim(cyc, 'rotated')[,2]) 
+points(d$mean_x, d$mean_y) 
+spl_cyc <- xspline(d$mean_x, d$mean_y, shape = -0.5, open = FALSE, draw = FALSE) %>% 
+    do.call(cbind, .) %>% 
+    as.data.frame()
+attr(reducedDim(cyc, 'rotated'), 'spline') <- spl_cyc
+dev.off()
+
+
+# ---------- Re-merge deut cells
+marker_genes <- reggenes[c('oscillatory', 'transient')] %>% unlist()
+set.seed(1000)
+sub <- !is.na(colData(WTs)$pseudotime) & colData(WTs)$annotation != 'Unannot' & WTs$annotation %in% c('EarlyDeuterosomal', 'Deuterosomal', 'LateDeuterosomal')
+deuts <- batchelor::fastMNN(
+    WTs[, sub], 
+    batch = WTs$batch[sub], 
+    d = 50, k = 20, 
+    subset.row = marker_genes, 
+    correct.all = TRUE,
+    BSPARAM = BiocSingular::RandomParam(deferred = TRUE)
+)
+
+# ---------- Add more annotations back to cyc SCE
+colData(deuts) <- colData(WTs[, sub])
+deuts$original_cluster <- deuts$annotation
+attr(reducedDim(deuts, 'corrected'), 'weights') <- rowData(deuts)$rotation
+rowData(deuts) <- rowData(WTs)[rownames(deuts), c("ID", "Symbol", "Type", "chr", "gene_biotype", "isMito", "isRibo")]
+
+# ---------- Add initial counts
+assay(deuts, 'counts') <- counts(WTs[rownames(deuts), sub])
+assay(deuts, 'logcounts') <- logcounts(WTs[rownames(deuts), sub])
+
+# ---------- Reduce dims
+set.seed(100)
+deuts <- runTSNE(deuts, dimred = "corrected")
+set.seed(200)
+deuts <- runUMAP(deuts, dimred = "corrected")
+set.seed(100)
+graph <- buildSNNGraph(deuts, use.dimred = "corrected", k = 7, type = 'jaccard')
+reducedDim(deuts, "force") <- igraph::layout_with_fr(graph)
+
+# ---------- Rotating 
+reducedDim(deuts, 'rotated') <- reducedDim(deuts, 'corrected')[, 1:2]
+reducedDim(deuts, 'rotated') <- rotateMatrix(reducedDim(deuts, 'rotated'), pi*(0.2))
+reducedDim(deuts, 'rotated')[,1] <- reducedDim(deuts, 'rotated')[,1] + 0
+reducedDim(deuts, 'rotated')[,2] <- reducedDim(deuts, 'rotated')[,2] - 0.070
+# reducedDim(deuts, 'rotated') <- rotateMatrix(reducedDim(deuts, 'rotated'), -pi*(1/8))
+# reducedDim(cyc, 'rotated') <- reducedDim(cyc, 'corrected')[, 1:2]
+
+# ---------- Defining angular progression pseudotime
+thetas <- apply(reducedDim(deuts, 'rotated')[,1:2], 1, function(row) {
+    an <- atan((row[2]) / (row[1]))
+    if (row[1] > 0 & row[2] > 0) {# First quarter
+        an <- an
+    }
+    else if (row[1] <= 0 & row[2] > 0) {# Second quarter
+        an <- pi + an
+    }
+    else if (row[1] <= 0 & row[2] <= 0) {# Third quarter
+        an <- pi + an
+    }
+    else if (row[1] > 0 & row[2] <= 0) {# Fourth quarter
+        an <- 2*pi + an
+    }
+    return(an)
+})
+thetas <- sapply(thetas, function(theta) ifelse(theta < pi/2, theta+2*pi, theta)) %>% scales::rescale(c(0, pi*2))
+deuts$pseudotime_angular <- -thetas + 2*pi
+
+# ----------- Compute spline 
+d <- reducedDim(deuts, 'rotated') %>% 
+    as_tibble() %>% 
+    setNames(c('x', 'y')) %>%
+    mutate(
+        angular_pseudotime = deuts$pseudotime_angular, 
+        angular_pseudotime_binned = cut(angular_pseudotime, breaks = seq(0, 2*pi, length.out = 13), include.lowest = TRUE)
+    ) %>% 
+    group_by(angular_pseudotime_binned) %>% 
+    summarize(mean_x = mean(x), mean_y = mean(y))
+pdf(tempfile())
+plot(reducedDim(deuts, 'rotated')[,1], reducedDim(deuts, 'rotated')[,2]) 
+points(d$mean_x, d$mean_y) 
+spl_deuts <- xspline(d$mean_x, d$mean_y, shape = -0.5, open = FALSE, draw = FALSE) %>% 
+    do.call(cbind, .) %>% 
+    as.data.frame()
+attr(reducedDim(deuts, 'rotated'), 'spline') <- spl_deuts
+dev.off()
+
+df_cyc <- tibble(
+    x = reducedDim(cyc, 'rotated')[,1], 
+    y = reducedDim(cyc, 'rotated')[,2], 
+    annot = cyc$annotation, 
+    CC = cyc$CellCyclePhase_hNSCs_hierarchy_1, 
+    pseudotime_angular = cyc$pseudotime_angular
+)
+df_cyc$CC[df_cyc$CC == 'G0'] <- 'G1'
+df_deuts <- tibble(
+    x = reducedDim(deuts, 'rotated')[,1], 
+    y = reducedDim(deuts, 'rotated')[,2], 
+    annot = deuts$annotation, 
+    CC = deuts$CellCyclePhase_hNSCs_hierarchy_1, 
+    pseudotime_angular = deuts$pseudotime_angular
+)
+df_deuts$CC[df_deuts$CC == 'G0'] <- 'G1'
+
+p <- list(
+    cowplot::plot_grid(
+        ggplot(df_cyc, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = annot), size = 3, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_cyc, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = pseudotime_angular), size = 3, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_gradientn(colors = c('#7400b8', '#2e2ef1', '#3584fc', '#25f8b2', '#a6f387', '#e5ff00', '#ffd900', '#ff7300', '#d80303'), limits = c(0, 2*pi)) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_cyc, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = CC), size = 3, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_cyc, aes(x = CC, y = pseudotime_angular, col = CC)) + 
+            ggrastr::geom_point_rast(position = position_jitterdodge(jitter.width = 3), size = 3, alpha = .4) +
+            scale_y_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+            scale_x_discrete(limits = rev) +
+            scale_colour_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+            theme_bw() +  
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA)
+            ) +
+            theme(panel.spacing = unit(2, "lines")) +
+            coord_flip(), 
+        rel_widths = c(1, 4)
+    ), 
+    cowplot::plot_grid(
+        ggplot(df_deuts, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = annot), size = 3, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c("#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_deuts, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = pseudotime_angular), size = 3, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_gradientn(colors = c('#7400b8', '#2e2ef1', '#3584fc', '#25f8b2', '#a6f387', '#e5ff00', '#ffd900', '#ff7300', '#d80303'), limits = c(0, 2*pi)) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_deuts, aes(x = x, y = y)) + 
+            ggrastr::geom_point_rast(aes(fill = CC), size = 2, shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df_deuts, aes(x = CC, y = pseudotime_angular, col = CC)) + 
+            ggrastr::geom_point_rast(position = position_jitterdodge(jitter.width = 3), size = 3, alpha = .4) +
+            scale_y_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+            scale_x_discrete(limits = rev) +
+            scale_colour_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+            theme_bw() +  
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA)
+            ) +
+            theme(panel.spacing = unit(2, "lines")) +
+            coord_flip(), 
+        rel_widths = c(1, 4)
+    )
+) %>% cowplot::plot_grid(plotlist = ., nrow = 1)
+ggsave('figures/fig3/cell-cycle-phases3.pdf', w = 25, h = 10)
+```
+
+### Plot velocity vector fields and velocity residuals 
+
+```{r velocity 1}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+WTs$pseudotime <- WTs$pseudotime_slingshot
+WTs_sub <- WTs[, !is.na(WTs$pseudotime_slingshot) & WTs$annotation != 'Unannot']
+WTs_tradeSeq <- readRDS('/home/rsg/Projects/20210419_MCCs_WTs-figures/results/WTs_tradeSeq.rds')
+WTs_velo <- readRDS('~/Projects/20210427_velocyto-mouse/results/WTs-velocyto.rds')
+friendly_cols <- c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")
+reggenes <- readRDS('/home/rsg/Projects/20211102_scRNAseq_MCCs_reprocessing-cycle-pseudocycle/results/WTs_genes-regulated-during-differentiation.rds')
+CellCyclePhase_hNSCs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/CellCyclePhase_hNSCs.rds')
+labels <- c(
+    'Neural G0' = 'G0', 
+    'G1' = 'G1', 
+    'G1/other' = 'G1', 
+    'Late G1' = 'G1', 
+    'S' = 'S', 
+    'S/G2' = 'S/G2', 
+    'G2/M' = 'G2/M',
+    'M/Early G1' = 'M/G1'
+)
+WTs$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(WTs$Barcode, CellCyclePhase_hNSCs$Barcode)]
+WTs$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(WTs$CellCyclePhase_hNSCs)], unique(labels))
+#
+MODE <- 'steady_state'
+NGENES <- 20000
+#
+alphaInCarth2DCoords <- function(x1, y1, x2, y2) {
+    pt <- c(x2, y2)
+    ct <- c(x1, y1)
+    an <- atan((pt[2]-ct[2]) / (pt[1]-ct[1]))
+    if (pt[1] > ct[1] & pt[2] > ct[2]) {# First quarter
+        an <- an
+    }
+    else if (pt[1] <= ct[1] & pt[2] > ct[2]) {# Second quarter
+        an <- pi + an
+    }
+    else if (pt[1] <= ct[1] & pt[2] <= ct[2]) {# Third quarter
+        an <- pi + an
+    }
+    else if (pt[1] > ct[1] & pt[2] <= ct[2]) {# Fourth quarter
+        an <- 2*pi + an
+    }
+    return(an)
+}
+exprs <- readRDS('/home/rsg/Projects/20211102_scRNAseq_MCCs_reprocessing-cycle-pseudocycle/results/cyc-deuts_exprs.rds')
+
+# ------ Compute velocity for cyc
+set.seed(1000)
+n <- exprs %>% group_by(cells, gene) %>% summarize(meanexpr = mean(expr)) %>% filter(cells == 'cyc') %>% arrange(desc(meanexpr)) %>% slice_head(n = NGENES) %>% pull(gene) %>% as.character()
+cyc_velo <- WTs_velo[n[n %in% rownames(WTs_velo)], match(cyc$Barcode, WTs_velo$Barcode)]
+reducedDims(cyc_velo) <- reducedDims(cyc)
+cyc_velo <- cyc_velo[, colSums(assay(cyc_velo, 1)) > 0 & colSums(assay(cyc_velo, 2)) > 0]
+cyc <- cyc[, cyc$Barcode %in% cyc_velo$Barcode]
+dim <- 'corrected'
+cyc_velo_out <- velociraptor::scvelo(
+    cyc_velo, 
+    assay.X = "spliced", 
+    use.dimred = dim,
+    mode = MODE
+)
+cyc$pseudotime_velociraptor <- cyc_velo_out$velocity_pseudotime
+cyc$velocity_length <- cyc_velo_out$velocity_length
+
+# ------ Angles of porjected velocity vectors
+set.seed(1000)
+velocityVectors_cyc <- cbind(reducedDim(cyc, 'rotated')[, 1:2], velociraptor::embedVelocity(reducedDim(cyc, 'rotated'), cyc_velo_out)[, 1:2]) %>% as.data.frame() %>% setNames(c('x1', 'y1', 'x2', 'y2'))
+cyc$mu <- sapply(1:ncol(cyc), function(K) alphaInCarth2DCoords(velocityVectors_cyc[K,1], velocityVectors_cyc[K,2], velocityVectors_cyc[K,3], velocityVectors_cyc[K,4]))
+cyc$velo_x <- velocityVectors_cyc[, 'x2']
+cyc$velo_y <- velocityVectors_cyc[, 'y2']
+cyc$velo_length <- sqrt((cyc$velo_x - reducedDim(cyc, 'rotated')[, 1])^2 + (cyc$velo_y - reducedDim(cyc, 'rotated')[, 2])^2)
+cyc$tau <- cyc$pseudotime_angular + pi/2
+cyc$tau <- sapply(cyc$tau, function(theta) ifelse(theta < pi/2, theta+2*pi, theta)) %>% scales::rescale(c(0, 2*pi)) %>% `-`() %>% scales::rescale(c(0, 2*pi))
+cyc$alpha <- cyc$mu - cyc$tau
+cyc$alpha <- ifelse(
+    cyc$alpha > pi, cyc$alpha - 2*pi, ifelse(
+    cyc$alpha < -pi, cyc$alpha + 2*pi, cyc$alpha
+))
+cyc$velo_cycle <- cyc$velo_length * cos(cyc$alpha)
+cyc$velo_exit <- cyc$velo_length * sin(cyc$alpha)
+
+# ------ Compute velocity for deuts
+set.seed(1000)
+n <- exprs %>% group_by(cells, gene) %>% summarize(meanexpr = mean(expr)) %>% filter(cells == 'cyc') %>% arrange(desc(meanexpr)) %>% slice_head(n = NGENES) %>% pull(gene) %>% as.character()
+deuts_velo <- WTs_velo[n[n %in% rownames(WTs_velo)], match(deuts$Barcode, WTs_velo$Barcode)]
+reducedDims(deuts_velo) <- reducedDims(deuts)
+deuts_velo <- deuts_velo[, colSums(assay(deuts_velo, 1)) > 0 & colSums(assay(deuts_velo, 2)) > 0]
+deuts <- deuts[, deuts$Barcode %in% deuts_velo$Barcode]
+dim <- 'corrected'
+deuts_velo_out <- velociraptor::scvelo(
+    deuts_velo, 
+    assay.X = "spliced", 
+    use.dimred = dim,
+    mode = MODE
+)
+deuts$pseudotime_velociraptor <- deuts_velo_out$velocity_pseudotime
+deuts$velocity_length <- deuts_velo_out$velocity_length
+
+# ------ Angles of porjected velocity vectors
+set.seed(1000)
+velocityVectors_deuts <- cbind(reducedDim(deuts, 'rotated')[, 1:2], velociraptor::embedVelocity(reducedDim(deuts, 'rotated'), deuts_velo_out)[, 1:2]) %>% as.data.frame() %>% setNames(c('x1', 'y1', 'x2', 'y2'))
+deuts$mu <- sapply(1:ncol(deuts), function(K) alphaInCarth2DCoords(velocityVectors_deuts[K,1], velocityVectors_deuts[K,2], velocityVectors_deuts[K,3], velocityVectors_deuts[K,4]))
+deuts$velo_x <- velocityVectors_deuts[, 'x2']
+deuts$velo_y <- velocityVectors_deuts[, 'y2']
+deuts$velo_length <- sqrt((deuts$velo_x - reducedDim(deuts, 'rotated')[, 1])^2 + (deuts$velo_y - reducedDim(deuts, 'rotated')[, 2])^2)
+deuts$tau <- deuts$pseudotime_angular + pi/2
+deuts$tau <- sapply(deuts$tau, function(theta) ifelse(theta < pi/2, theta+2*pi, theta)) %>% scales::rescale(c(0, 2*pi)) %>% `-`() %>% scales::rescale(c(0, 2*pi))
+deuts$alpha <- deuts$mu - deuts$tau
+deuts$alpha <- ifelse(
+    deuts$alpha > pi, deuts$alpha - 2*pi, ifelse(
+    deuts$alpha < -pi, deuts$alpha + 2*pi, deuts$alpha
+))
+deuts$velo_cycle <- deuts$velo_length * cos(deuts$alpha)
+deuts$velo_exit <- deuts$velo_length * sin(deuts$alpha)
+
+
+p <- cowplot::plot_grid(
+    # cyc
+    tibble(
+        x = reducedDim(cyc, 'rotated')[,1], 
+        y = reducedDim(cyc, 'rotated')[,2], 
+        annotation = cyc$annotation,
+    ) %>% ggplot(aes(x, y)) + 
+        geom_point(aes(col = annotation), size = 1.5) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+            panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+            legend.position = "none",
+            axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+            axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) + 
+        geom_segment(
+            data=velociraptor::gridVectors(reducedDim(cyc, 'rotated'), velociraptor::embedVelocity(reducedDim(cyc, 'rotated'), cyc_velo_out), resolution = 10), 
+            mapping=aes(x=start.1, y=start.2, xend=end.1, yend=end.2), 
+            arrow=arrow(length=unit(0.05, "inches"))
+        ) + 
+        scale_colour_manual(values = friendly_cols[c(1)]),
+    cowplot::plot_grid(
+        tibble(
+            x = reducedDim(cyc, 'rotated')[, 1],
+            y = reducedDim(cyc, 'rotated')[, 2],
+            expr = SCTools::bindByQuantiles(assay(cyc_velo_out, 'velocity')['Pcna',], q_low = 0.10/2, q_high = 1-0.10/2)
+        ) %>% ggplot(aes(x, y, fill = expr)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1, stroke = 0.025, raster.dpi = 200) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+                panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+                legend.position = "none",
+                axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+                axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) + 
+            labs(x = '', y = '', title = 'Pcna') +
+            colorspace::scale_fill_continuous_diverging(palette = "Purple-Green", mid = 0), 
+        tibble(
+            x = reducedDim(cyc, 'rotated')[, 1],
+            y = reducedDim(cyc, 'rotated')[, 2],
+            expr = SCTools::bindByQuantiles(assay(cyc_velo_out, 'velocity')['Ube2c',], q_low = 0.10/2, q_high = 1-0.10/2)
+        ) %>% ggplot(aes(x, y, fill = expr)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1, stroke = 0.025, raster.dpi = 200) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+                panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+                legend.position = "none",
+                axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+                axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) + 
+            labs(x = '', y = '', title = 'Ube2c') +
+            colorspace::scale_fill_continuous_diverging(palette = "Purple-Green", mid = 0),
+        nrow = 2
+    ), 
+    # deuts
+    tibble(
+        x = reducedDim(deuts, 'rotated')[,1], 
+        y = reducedDim(deuts, 'rotated')[,2], 
+        annotation = deuts$annotation,
+    ) %>% ggplot(aes(x, y)) + 
+        geom_point(aes(col = annotation), size = 1) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+            panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+            legend.position = "none",
+            axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+            axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )  + 
+        geom_segment(
+            data=velociraptor::gridVectors(reducedDim(deuts, 'rotated'), velociraptor::embedVelocity(reducedDim(deuts, 'rotated'), deuts_velo_out), resolution = 20), 
+            mapping=aes(x=start.1, y=start.2, xend=end.1, yend=end.2), 
+            arrow=arrow(length=unit(0.05, "inches"))
+        ) + 
+        scale_colour_manual(values = friendly_cols[c(4,5,6)]),
+    cowplot::plot_grid(
+        tibble(
+            x = reducedDim(deuts, 'rotated')[, 1],
+            y = reducedDim(deuts, 'rotated')[, 2],
+            expr = SCTools::bindByQuantiles(assay(deuts_velo_out, 'velocity')['Deup1',], q_low = 0.10/2, q_high = 1-0.10/2)
+        ) %>% ggplot(aes(x, y, fill = expr)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 0.5, stroke = 0.025, raster.dpi = 200) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+                panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+                legend.position = "none",
+                axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+                axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            )  + 
+            labs(x = '', y = '', title = 'Deup1') +
+            colorspace::scale_fill_continuous_diverging(palette = "Purple-Green", mid = 0), 
+        tibble(
+            x = reducedDim(deuts, 'rotated')[, 1],
+            y = reducedDim(deuts, 'rotated')[, 2],
+            expr = SCTools::bindByQuantiles(assay(deuts_velo_out, 'velocity')['Cdc20b',], q_low = 0.10/2, q_high = 1-0.10/2)
+        ) %>% ggplot(aes(x, y, fill = expr)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 0.5, stroke = 0.025, raster.dpi = 200) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+                panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+                legend.position = "none",
+                axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+                axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            )  + 
+            labs(x = '', y = '', title = 'Cdc20b') +
+            colorspace::scale_fill_continuous_diverging(palette = "Purple-Green", mid = 0),
+        nrow = 2
+    ), 
+    #
+    nrow = 1, rel_widths = c(2, 1, 2, 1)
+)
+ggsave('figures/fig3/cyc-deuts_velocity-and-residuals.pdf', width = 10, height = 5)
+```
+
+### Embed deuts and cyc together
+
+```{r}
+gprofiler2::set_base_url('https://biit.cs.ut.ee/gprofiler_archive3/e103_eg50_p15')
+cycling_genes <- gprofiler2::gconvert('GO:0007049', 'mmusculus')$name #GO cell cycle
+cycling_genes <- cycling_genes[cycling_genes %in% rownames(WTs)]
+cycling_genes <- cycling_genes[!rowData(WTs[cycling_genes,])$isRibo & !rowData(WTs[cycling_genes,])$isMito]
+cyc$pseudotime <- NULL
+deuts$pseudotime <- NULL
+set.seed(100)
+mergedD <- cbind(cyc, deuts)
+mergedD$type <- c(rep('cyc', ncol(cyc)), rep('deuts', ncol(deuts)))
+mergedD2 <- batchelor::fastMNN(
+    mergedD, 
+    batch = paste0(mergedD$type, '_', mergedD$batch),
+    d = 50,
+    k = 50, 
+    correct.all = TRUE,
+    subset.row = which(rownames(mergedD) %in% cycling_genes), 
+    BSPARAM = BiocSingular::RandomParam(deferred = TRUE)
+)
+reducedDim(mergedD, 'merged_corrected') <- reducedDim(mergedD2, 'corrected')
+set.seed(100)
+reducedDim(mergedD, 'merged_PCA') <- calculatePCA(mergedD)
+set.seed(100)
+reducedDim(mergedD, 'merged_UMAP') <- calculateUMAP(mergedD, dimred = "merged_corrected")
+set.seed(200)
+graph <- scran::buildSNNGraph(
+    mergedD, 
+    k = 6, 
+    use.dimred = 'merged_corrected'
+)
+mergedD$cluster <- igraph::cluster_louvain(graph)$membership
+cluster_order <- c('1' = 4, '2' = 3, '3' = 1, '4' = 2, '5' = 5)
+mergedD$cluster <- cluster_order[mergedD$cluster]
+mergedD$cluster <- factor(mergedD$cluster, c(1:6))
+
+mergedD$CellCyclePhase_hNSCs_hierarchy_1[mergedD$CellCyclePhase_hNSCs_hierarchy_1 == 'G0'] <- 'G1'
+
+df <- as_tibble(colData(mergedD)) %>% mutate(x = reducedDim(mergedD, 'merged_UMAP')[,1], y = reducedDim(mergedD, 'merged_UMAP')[,2])
+p <- cowplot::plot_grid(
+    ggplot(slice_sample(df, n = nrow(df)), aes(x = x, y = y, fill = annotation, size = annotation == 'CyclingProgenitors')) + 
+        ggrastr::geom_point_rast(shape = 21, stroke = 0.025, alpha = 0.8) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        scale_fill_manual(values = c("#46befa", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+        scale_size_manual(values = c(3, 4)) + 
+        coord_fixed(ratio = 1),
+    cowplot::plot_grid(
+        ggplot(df[df$annotation == 'CyclingProgenitors', ], aes(x = x, y = y, fill = annotation, size = annotation == 'CyclingProgenitors')) + 
+            ggrastr::geom_point_rast(shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c("#46befa", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+            scale_size_manual(values = c(3, 4)) + 
+            coord_fixed(ratio = 1), 
+        ggplot(df[df$annotation != 'CyclingProgenitors', ], aes(x = x, y = y, fill = annotation, size = annotation == 'CyclingProgenitors')) + 
+            ggrastr::geom_point_rast(shape = 21, stroke = 0.025, alpha = 0.8) + 
+            theme_bw() + 
+            theme(
+                text = ggplot2::element_text(size = 12),
+                panel.background = ggplot2::element_rect(fill = NA), 
+                panel.ontop = FALSE, 
+                panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+                axis.line = element_blank(),
+                axis.text = element_blank(),
+                axis.ticks.x=element_blank(), 
+                axis.ticks.y=element_blank(), 
+                panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+                panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+                legend.position = "bottom",
+                strip.switch.pad.grid = unit(0.2, "cm"), 
+                strip.placement = "outside",
+                strip.background = element_rect(fill = NA),
+                aspect.ratio = 1
+            ) +
+            scale_fill_manual(values = c("#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+            scale_size_manual(values = c(3, 4)) + 
+            coord_fixed(ratio = 1), 
+        nrow = 2
+    ), 
+    ggplot(df, aes(x = x, y = y, fill = cluster)) + 
+        ggrastr::geom_point_rast(size = 4, shape = 21, stroke = 0.025, alpha = 0.8) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        coord_fixed(ratio = 1),
+    tibble(cell = mergedD$Barcode, cluster = mergedD$cluster, annotation = mergedD$annotation, CC = mergedD$CellCyclePhase_hNSCs_hierarchy_1) %>% 
+        mutate(cluster = factor(cluster, levels = 1:6)) %>%
+        mutate(CC = forcats::fct_rev(CC)) %>%
+        mutate(annotation = forcats::fct_rev(annotation)) %>%
+        ggplot(aes(x = cluster, fill = annotation)) + 
+        geom_bar(position = position_fill()) +
+        scale_fill_manual(values = rev(friendly_cols[c(1, 4:6)])) +
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ),
+    ggplot(df, aes(x = x, y = y, fill = CellCyclePhase_hNSCs_hierarchy_1)) + 
+        ggrastr::geom_point_rast(size = 4, shape = 21, stroke = 0.025, alpha = 0.8) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        scale_fill_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        coord_fixed(ratio = 1),
+    tibble(cell = mergedD$Barcode, cluster = mergedD$cluster, annotation = mergedD$annotation, CC = mergedD$CellCyclePhase_hNSCs_hierarchy_1) %>% 
+        mutate(cluster = factor(cluster, levels = 1:6)) %>%
+        ggplot(aes(x = cluster, fill = CC)) + 
+        geom_bar(position = position_fill()) +
+        scale_fill_manual(values = c('#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ),
+    nrow = 1
+)
+ggsave('figures/fig3/mergedD_UMAP.pdf', width = 24, height = 10)
+```
+
+### Plotting # of neighbors 
+
+```{r}
+`%E>%` <- tidygraph::`%E>%`
+## Neigbhors for real data 
+set.seed(100)
+k = 5
+dist <- as.matrix(dist(reducedDim(mergedD, 'merged_corrected')))
+edges <- mat.or.vec(0,2)
+for (i in 1:nrow(dist)){
+    matches <- setdiff(order(dist[i,], decreasing = FALSE)[1:(k+1)],i)
+    edges <- rbind(edges, cbind(rep(i,k), matches))  
+}
+graph <- rbind(
+    igraph::graph_from_edgelist(edges, directed = TRUE) %>% 
+    tidygraph::as_tbl_graph() %E>% 
+    as_tibble() %>%
+    mutate(from_annot = mergedD$annotation[from], to_annot = mergedD$annotation[to]) %>%
+    mutate(from_annot = ifelse(from_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = ifelse(to_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = factor(to_annot, levels = c('CyclingProgenitors', 'Deuterosomal'))) %>%
+    filter(from_annot == 'CyclingProgenitors') %>%
+    select(-to, -from_annot) %>%
+    group_by(from, to_annot) %>% 
+    dplyr::tally() %>% 
+    pivot_wider(names_from = to_annot, values_from = n) %>% 
+    mutate_if(is.numeric, list(~ replace_na(., 0))) %>% 
+    pivot_longer(cols = -from, names_to = 'to_annot', values_to = 'n') %>% 
+    filter(to_annot == 'Deuterosomal'),
+    igraph::graph_from_edgelist(edges, directed = TRUE) %>% 
+    tidygraph::as_tbl_graph() %E>% 
+    as_tibble() %>%
+    mutate(from_annot = mergedD$annotation[from], to_annot = mergedD$annotation[to]) %>%
+    mutate(from_annot = ifelse(from_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = ifelse(to_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = factor(to_annot, levels = c('CyclingProgenitors', 'Deuterosomal'))) %>%
+    filter(from_annot == 'Deuterosomal') %>%
+    select(-to, -from_annot) %>%
+    group_by(from, to_annot) %>% 
+    dplyr::tally() %>% 
+    pivot_wider(names_from = to_annot, values_from = n) %>% 
+    mutate_if(is.numeric, list(~ replace_na(., 0))) %>% 
+    pivot_longer(cols = -from, names_to = 'to_annot', values_to = 'n') %>% 
+    filter(to_annot == 'CyclingProgenitors')
+)
+
+## Simulated mergedD 
+set.seed(100)
+simData <- splatter::lunSimulate(params = splatter::newLunParams(nGenes = nrow(deuts), groupCells = c(1113, 1233, 565)))
+simData <- logNormCounts(simData)
+rowData(simData) <- rowData(deuts)
+colData(simData) <- colData(deuts)
+cyc2 <- cyc
+reducedDims(cyc2) <- NULL
+assays(cyc2) <- assays(cyc2)[c('counts', 'logcounts')]
+assays(simData) <- assays(simData)[c('counts', 'logcounts')]
+mergedD_sim <- cbind(cyc2, simData)
+mergedD_sim$type <- c(rep('cyc', ncol(cyc)), rep('sim', ncol(simData)))
+mergedD2_sim <- batchelor::fastMNN(
+    mergedD_sim, 
+    batch = paste0(mergedD_sim$type, '_', mergedD_sim$batch),
+    d = 50,
+    k = 50, 
+    correct.all = TRUE,
+    subset.row = which(rownames(mergedD_sim) %in% cycling_genes), 
+    BSPARAM = BiocSingular::RandomParam(deferred = TRUE)
+)
+reducedDim(mergedD_sim, 'merged_corrected') <- reducedDim(mergedD2_sim, 'corrected')
+reducedDim(mergedD_sim, 'PCA') <- calculatePCA(mergedD_sim)
+
+## Neighbors for simulated data
+set.seed(100)
+k = 5
+dist <- as.matrix(dist(reducedDim(mergedD_sim, 'merged_corrected')))
+edges <- mat.or.vec(0,2)
+for (i in 1:nrow(dist)){
+    matches <- setdiff(order(dist[i,], decreasing = FALSE)[1:(k+1)],i)
+    edges <- rbind(edges, cbind(rep(i,k), matches))  
+}
+graph_sim <- rbind(
+    igraph::graph_from_edgelist(edges, directed = TRUE) %>% 
+    tidygraph::as_tbl_graph() %E>% 
+    as_tibble() %>%
+    mutate(from_annot = mergedD_sim$annotation[from], to_annot = mergedD_sim$annotation[to]) %>%
+    mutate(from_annot = ifelse(from_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = ifelse(to_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = factor(to_annot, levels = c('CyclingProgenitors', 'Deuterosomal'))) %>%
+    filter(from_annot == 'CyclingProgenitors') %>%
+    select(-to, -from_annot) %>%
+    group_by(from, to_annot) %>% 
+    dplyr::tally() %>% 
+    pivot_wider(names_from = to_annot, values_from = n) %>% 
+    mutate_if(is.numeric, list(~ replace_na(., 0))) %>% 
+    pivot_longer(cols = -from, names_to = 'to_annot', values_to = 'n') %>% 
+    filter(to_annot == 'Deuterosomal'),
+    igraph::graph_from_edgelist(edges, directed = TRUE) %>% 
+    tidygraph::as_tbl_graph() %E>% 
+    as_tibble() %>%
+    mutate(from_annot = mergedD_sim$annotation[from], to_annot = mergedD_sim$annotation[to]) %>%
+    mutate(from_annot = ifelse(from_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = ifelse(to_annot == 'CyclingProgenitors', 'CyclingProgenitors', 'Deuterosomal')) %>%
+    mutate(to_annot = factor(to_annot, levels = c('CyclingProgenitors', 'Deuterosomal'))) %>%
+    filter(from_annot == 'Deuterosomal') %>%
+    select(-to, -from_annot) %>%
+    group_by(from, to_annot) %>% 
+    dplyr::tally() %>% 
+    pivot_wider(names_from = to_annot, values_from = n) %>% 
+    mutate_if(is.numeric, list(~ replace_na(., 0))) %>% 
+    pivot_longer(cols = -from, names_to = 'to_annot', values_to = 'n') %>% 
+    filter(to_annot == 'CyclingProgenitors')
+)
+
+## Plot results
+df <- rbind(graph %>% mutate(class = 'observed'), graph_sim %>% mutate(class = 'simulated'))
+p <- ggplot(df, aes(x = n, fill = to_annot, alpha = class)) + 
+    geom_bar(position = 'dodge') + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    )+
+    scale_alpha_manual(values = c(1, 0.5)) + 
+    scale_fill_manual(values = c(friendly_cols[c(1, 5)])) + 
+    facet_wrap(~to_annot, scales = 'free')
+ggsave('figures/fig3/mergedD_cluster-neighbors.pdf', width = 12, h = 5)
+```
+
+### Plotting of deuterosomal stages along pseudotime 
+
+```{r}
+df_deuts <- tibble(
+    x = reducedDim(deuts, 'rotated')[,1], 
+    y = reducedDim(deuts, 'rotated')[,2], 
+    annot = deuts$annotation, 
+    CC = deuts$CellCyclePhase_hNSCs_hierarchy_1, 
+    pseudotime_angular = deuts$pseudotime_angular
+)
+p <- ggplot(df_deuts, aes(x = annot, y = pseudotime_angular, col = annot)) + 
+    ggrastr::geom_point_rast(position = position_jitterdodge(jitter.width = 1), size = 2, alpha = .4) +
+    scale_y_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+    scale_x_discrete(limits = rev) +
+    scale_colour_manual(values = c("#e4d729", "#e9aa35", "#c4750d")) + 
+    theme_bw() +  
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    theme(panel.spacing = unit(2, "lines")) +
+    coord_flip()
+ggsave('figures/fig3/deuts_distribution-along-pseudotime.pdf', w = 10, h = 3)
+```
+
+
+
+

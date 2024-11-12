@@ -1,0 +1,678 @@
+---
+title: "scRNAseq_MCCs_paper-figures"
+date: "2022-02-03"
+author: Jacques SERIZAY
+output:
+    html_document:
+        theme: flatly
+        highlight: tango
+        preserve_yaml: true
+        code_folding: show
+        df_print: tibble
+        toc: true
+        toc_float: true
+path: /home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures
+---
+
+```{r, include=FALSE}
+setwd('/home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures')
+require(tidyverse)
+require(magrittr)
+require(SingleCellExperiment)
+```
+
+### Graphic table of genes expressed in each CC functions
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .)
+expressed_genes <- lapply(levels(WTs$annotation_hierarchy_1), function(class) {
+    rowSums( logcounts(WTs[genes$gene, WTs$annotation_hierarchy_1 == class]) >= N ) >= {sum(WTs$annotation_hierarchy_1 == class) * PCT}
+}) %>% 
+    do.call(cbind, .) %>% 
+    `colnames<-`(levels(WTs$annotation_hierarchy_1)) %>% 
+    as_tibble(rownames = 'gene') %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>%
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+expressed_in_cyc_deuts <- expressed_genes %>% pivot_wider(names_from = cluster, values_from = expressed) %>% filter(CyclingProgenitors | Deuterosomal) %>% pull(gene)
+
+dt <- expressed_genes %>% 
+    filter(expressed) %>% 
+    group_by(cluster, pathway) %>%  
+    tally() %>%
+    left_join(cell_cycle_genes %>% unnest(cols = c(genes)) %>% dplyr::count(pathway, name = 'total')) %>% 
+    mutate(pct = n / total) %>%
+    mutate(cluster = factor(cluster, levels(WTs$annotation_hierarchy_1)[1:4])) %>% 
+    drop_na() %>%
+    mutate(label = glue::glue("{n}"))  %>% 
+    mutate(pathway = glue::glue('{pathway} (n={total})') %>% str_replace_all('_', ' '))
+dt$pathway <- forcats::fct_relevel(dt$pathway, filter(dt, cluster == 'Deuterosomal') %>% arrange(desc(pct)) %>% pull(pathway) %>% as.character())
+
+p <- ggplot(dt, aes(x = forcats::fct_rev(pathway), y = pct, fill = forcats::fct_rev(cluster))) + 
+    geom_col(aes(y = 1), alpha = 0.2, position = position_dodge2()) + 
+    geom_col(position = position_dodge2()) + 
+    scale_fill_manual(values = rev(c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f", "#a1a1a1", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")[1:4])) +
+    theme_minimal() + theme(panel.border = element_rect(fill = NA)) + 
+    coord_flip() + 
+    facet_grid(pathway~cluster, scales = 'free') + 
+    theme(panel.spacing = unit(0, 'cm')) + 
+    scale_x_discrete(expand = c(0, 0)) + scale_y_discrete(expand = c(0, 0)) +
+    theme(panel.grid.major = element_line(colour = NA), panel.grid.minor = element_line(colour = NA)) + 
+    theme(
+        strip.text.y = element_blank(),
+        strip.background = element_blank(), 
+        legend.position = 'none'
+    ) + 
+    labs(x = '', y = '') + 
+    geom_label(aes(x = 0.6, y = 0.98, label = label), size = 2, fill = NA, hjust = 1, vjust = 0, label.size = NA)
+ggsave('figures/fig2/number-of-expressed-CC-factors_table.pdf', width = 7, height = 5)
+```
+
+### Distribution of deuts-enriched, Graphic table of genes expressed in each CC functions
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .)
+expressed_genes <- lapply(levels(WTs$annotation_hierarchy_1), function(class) {
+    rowSums( logcounts(WTs[genes$gene, WTs$annotation_hierarchy_1 == class]) >= N ) >= {sum(WTs$annotation_hierarchy_1 == class) * PCT}
+}) %>% 
+    do.call(cbind, .) %>% 
+    `colnames<-`(levels(WTs$annotation_hierarchy_1)) %>% 
+    as_tibble(rownames = 'gene') %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>%
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+expressed_in_cyc_deuts <- expressed_genes %>% pivot_wider(names_from = cluster, values_from = expressed) %>% filter(CyclingProgenitors | Deuterosomal) %>% pull(gene)
+df <- scran::findMarkers(
+    WTs, 
+    groups = WTs$annotation_hierarchy_1, 
+    design = as.matrix(data.frame('genotype' = as.numeric(factor(WTs$batch)))),
+    pval.type = 'any', 
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% 
+    '[['('Deuterosomal') %>% 
+    as.data.frame() %>% 
+    rownames_to_column('gene') %>% 
+    as_tibble() %>% 
+    select(gene, logFC.CyclingProgenitors) %>% 
+    arrange(desc(logFC.CyclingProgenitors)) %>% 
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes')) %>%
+    drop_na(pathway) %>% 
+    filter(!pathway %in% c('Other', 'Unclear', 'Uncharacterized'), gene %in% expressed_in_cyc_deuts) %>%
+    mutate(class = ifelse(logFC.CyclingProgenitors >= log2(1.5), 'deutEnriched', ifelse(logFC.CyclingProgenitors <= -log2(1.5), 'cycEnriched', 'none'))) %>% 
+    mutate(pathway = factor(pathway, c("Centrosome_regulation", "Microtubule_regulation", "Cytokinesis", "Nuclear_envelope_regulation", "DNA_damage", "Chromosome_partition", "Spindle_checkpoint", "Spindle_assembly_and_regulation", "Cell_cycle_regulation", "Kinetochore_formation", "DNA_replication", "DNA_condensation", "DNA_metabolism", "Chromatin_organization"))) %>% 
+    mutate(class = factor(class, c('cycEnriched', 'none', 'deutEnriched'))) %>% 
+    left_join(select(., -logFC.CyclingProgenitors, -class) %>% dplyr::count(pathway))  %>% 
+    mutate(pathway = factor(pathway, levels = rev(levels(pathway))))
+p <- ggplot(df, aes(x = pathway, fill = class)) + 
+    geom_bar(width = 1, position = "fill", col = 'black') +
+    scale_fill_manual(values = friendly_cols <- c("#46befa", "#fcfcfc", "#e9aa35")) +
+    scale_colour_manual(values = friendly_cols <- c("#46befa", "#fcfcfc", "#e9aa35")) +
+    labs(x = 'Cell cycle-related processes', y = '% of genes activated')  + 
+    theme_bw() + 
+    scale_y_continuous(expand = c(0, 0)) + 
+    coord_flip() + 
+    theme(legend.position = 'bottom') + 
+    theme(plot.margin = unit(c(1,1,1,1), "cm"))
+ggsave(glue::glue('figures/fig2/DE-cyc-deuts_expressedCCgenes.pdf'), height = 5, width = 7)
+```
+
+### Pointrange plot of expression for CC genes in each functional class 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .)
+expressed_genes <- lapply(levels(WTs$annotation_hierarchy_1), function(class) {
+    rowSums( logcounts(WTs[genes$gene, WTs$annotation_hierarchy_1 == class]) >= N ) >= {sum(WTs$annotation_hierarchy_1 == class) * PCT}
+}) %>% 
+    do.call(cbind, .) %>% 
+    `colnames<-`(levels(WTs$annotation_hierarchy_1)) %>% 
+    as_tibble(rownames = 'gene') %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>%
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+expressed_in_cyc_deuts <- expressed_genes %>% pivot_wider(names_from = cluster, values_from = expressed) %>% filter(CyclingProgenitors | Deuterosomal) %>% pull(gene)
+
+subWTs <- WTs[unlist(cell_cycle_genes$genes)[unlist(cell_cycle_genes$genes) %in% rownames((WTs))], WTs$annotation_hierarchy_1 %in% c('CyclingProgenitors', 'Progenitors', 'Deuterosomal')]
+colnames(subWTs) <- subWTs$Barcode
+df <- lapply(cell_cycle_genes$pathway, function(pathway) {
+    message(pathway)
+    genes <- cell_cycle_genes$genes[cell_cycle_genes$pathway == pathway][[1]]
+    genes <- genes[genes %in% rownames(WTs)]
+    genes <- genes[genes %in% expressed_in_cyc_deuts]
+    d <- assay(subWTs[genes,], 'logcounts') %>% 
+        as.matrix() %>%
+        as.data.frame() %>% 
+        rownames_to_column("gene") %>% 
+        pivot_longer(-gene, names_to = 'Barcode', values_to = 'expr') %>% 
+        left_join(., colData(subWTs) %>% as.data.frame() %>% select(Barcode, annotation_hierarchy_1)) %>% 
+        mutate(pathway = pathway)
+}) %>% bind_rows()
+m <- scran::findMarkers(
+    WTs, 
+    groups = WTs$annotation_hierarchy_1, 
+    design = as.matrix(data.frame('genotype' = as.numeric(factor(WTs$batch)))),
+    pval.type = 'any', 
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% 
+    '[['('Deuterosomal') %>% 
+    as.data.frame() %>% 
+    rownames_to_column('gene') %>% 
+    as_tibble() %>% 
+    select(gene, logFC.Progenitors, logFC.CyclingProgenitors) %>% 
+    filter(gene %in% df$gene) %>% 
+    arrange(desc(logFC.CyclingProgenitors))
+d <- lapply(cell_cycle_genes$pathway, function(x) {
+    df2 <- df %>% 
+        filter(pathway == x) %>% 
+        mutate(annotation_hierarchy_1 = factor(annotation_hierarchy_1, c('CyclingProgenitors', 'Progenitors', 'Deuterosomal'))) %>% 
+        filter(annotation_hierarchy_1 != 'Progenitors') %>%
+        drop_na() %>% 
+        left_join(m) %>% 
+        mutate(isDE = abs(logFC.CyclingProgenitors) > log2(1.5)) %>% 
+        mutate(pathway = str_replace_all(pathway, '_', ' ')) %>% 
+        left_join(select(expressed_genes, -pathway), by = c('gene', 'annotation_hierarchy_1' = 'cluster')) %>% 
+        mutate(expressed = factor(expressed, c(TRUE, FALSE))) %>%
+        arrange(desc(logFC.CyclingProgenitors)) %>%
+        mutate(gene = factor(gene, levels = unique(gene))) 
+    cnts <- df2 %>% 
+        select(gene, annotation_hierarchy_1, pathway, logFC.CyclingProgenitors, isDE, expressed) %>% 
+        distinct() %>% 
+        filter(annotation_hierarchy_1 == 'Deuterosomal') %>% 
+        mutate(enriched = ifelse(!isDE, 'none', ifelse(logFC.CyclingProgenitors > log2(1.5), 'deuts', 'cyc'))) %>% 
+        group_by(annotation_hierarchy_1, pathway, enriched) %>% 
+        dplyr::count() %>%
+        pivot_wider(names_from = enriched, values_from = n) %>% 
+        ungroup() 
+    if (is.null(cnts$deuts)) cnts$deuts <- 0
+    if (is.null(cnts$none)) cnts$none <- 0
+    if (is.null(cnts$cyc)) cnts$cyc <- 0
+    rects <- tibble(
+        xmin = c(0.5, cnts$deuts + 0.5, sum(cnts[c('cyc', 'deuts', 'none')]) - cnts$cyc + 0.5), 
+        xmax = c(cnts$deuts + 0.5, sum(cnts[c('cyc', 'deuts', 'none')]) - cnts$cyc + 0.5, Inf), 
+        ymin = c(-Inf, -Inf, -Inf), 
+        ymax = c(Inf, Inf, Inf), 
+        type = factor(c('deuts', 'cyc', 'none'), c('cyc', 'deuts', 'none'))
+    )
+    p <- ggplot(df2, aes(x = gene, y = expr, colour = annotation_hierarchy_1, fill = annotation_hierarchy_1, alpha = expressed)) + 
+        stat_summary(mapping = aes(fill = annotation_hierarchy_1), fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", position = position_dodge(width = .25), stroke = NA, size = 0, col = 'black') + 
+        geom_rect(data = rects, aes(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax, fill = type), inherit.aes = FALSE, alpha = 0.3) +
+        stat_summary(mapping = aes(fill = annotation_hierarchy_1), fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", shape = 21, position = position_dodge(width = .25), size = 1, col = 'black') + 
+        scale_alpha_manual(values = c(1, 0.2)) +
+        scale_fill_manual(values = c("#46befa", "#e9aa35", "#fcfcfc", "#e9aa35", "#46befa")) +
+        scale_colour_manual(values = c("#46befa", "#e9aa35", "#c4320d")) +
+        labs(x = '', y = 'Logcounts')  + 
+        theme_bw(base_size = 19) + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+        theme(legend.position = 'none') + 
+        coord_fixed(ylim = c(0, 6), ratio = 1.25) + 
+        annotate("text", x = length(unique(df2$gene)), y = 5.5, label = unique(df2$pathway), hjust = 1, size = 8) 
+    ggsave(glue::glue('figures/fig2/only-expressed-genes__expr_{x}___function.pdf'), height = 5, width = 15, limitsize = FALSE)
+    return(df2)
+}) %>% bind_rows()
+```
+
+### Violin plot of gene expression for Mitotic Oscillator
+
+```{r}
+genes <- tibble(
+    gene = c(
+        'Cdk1', 
+        'Ccnb1', 
+        "Cdc20", 
+        "Anapc1", "Anapc2", 'Cdc37', 'Anapc4', "Anapc5", 'Cdc16', 'Anapc7', 'Cdc23', 'Anapc10', "Anapc11", "Anapc13", "Anapc15", "Anapc16", 
+        "Plk1",
+        'Wee1', 
+        'Pkmyt1', 
+        'Cdc25a', 'Cdc25b', 'Cdc25c', 
+        "Mad2l1", "Bub1b", "Bub3",
+        "Fbxo5", #Emi1
+        "Fbxo43", #Emi2
+        "Ube2s", 'Ube2c',
+        "Pttg1", #Securin
+        "Espl1" #Separase
+    ), 
+    group = c(
+        'Cdk1', 
+        'Ccnb1', 
+        "Cdc20", 
+        "APC/C", "APC/C", 'APC/C', 'APC/C', "APC/C", 'APC/C', 'APC/C', 'APC/C', 'APC/C', "APC/C", "APC/C", "APC/C", "APC/C", 
+        "Plk1",
+        'Wee1', 
+        'Pkmyt1', 
+        'Cdc25', 'Cdc25', 'Cdc25', 
+        "Mad2l1", "Bub1b", "Bub3",
+        "Fbxo5", #Emi1
+        "Fbxo43", #Emi2
+        "Ube2s", 'Ube2c',
+        "Securin", #Securin
+        "Separase" #Separase
+    )
+)
+sub <- WTs[, {WTs$CellCyclePhase_Seurat == 'G2M' & WTs$annotation == 'CyclingProgenitors'} | WTs$annotation == 'LateDeuterosomal']
+m <- scran::findMarkers(
+    sub, 
+    groups = sub$annotation_hierarchy_1, 
+    # design = as.matrix(data.frame('genotype' = as.numeric(factor(sub$batch)))),
+    pval.type = 'any', 
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% 
+    '[['('Deuterosomal') %>% 
+    as.data.frame() %>% 
+    rownames_to_column('gene') %>% 
+    as_tibble() %>% 
+    select(gene, FDR, logFC.CyclingProgenitors) %>% 
+    filter(gene %in% genes$gene) %>% 
+    arrange(desc(logFC.CyclingProgenitors))
+df <- assay(WTs, 'logcounts')[genes$gene, ] %>% t() %>% as('matrix') %>% setNames(genes$gene) %>%
+    cbind(reducedDim(WTs, 'UMAP') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2')), annotation = WTs$annotation, cc = WTs$CellCyclePhase_Seurat) %>%
+    as_tibble() %>%
+    mutate(annotation = ifelse(grepl('Progenitors_I', annotation), 'Progenitors', as.character(annotation))) %>%
+    mutate(annotation = factor(annotation, c('CyclingProgenitors', 'Progenitors', 'LateDeuterosomal'))) %>%
+    filter({cc == 'G2M' & annotation == 'CyclingProgenitors'} | annotation == 'LateDeuterosomal' | {annotation == 'Progenitors'}) %>%
+    pivot_longer(cols = all_of(genes$gene), names_to = 'gene', values_to = 'expr') %>% 
+    mutate(gene = factor(gene, genes$gene)) %>% 
+    left_join(genes) %>%
+    left_join(mutate(m, overExpressedInDeuts = logFC.CyclingProgenitors >= log2(1.5), underExpressedInDeuts = logFC.CyclingProgenitors <= -log2(1.5))) %>%
+    mutate(across(starts_with('logFC'), ~ replace_na(., 0))) %>% 
+    mutate(across(ends_with('InDeuts'), ~ replace_na(., FALSE)))  %>% 
+    mutate(group = factor(group, levels = unique(genes$group))) 
+p <- ggplot(df, aes(x = annotation, y = expr)) + 
+    geom_violin(aes(fill = annotation), scale = 'width', shape = 16, alpha = 0.6, size = 0.4) + 
+    geom_boxplot(fill = 'white', col = 'black', outlier.shape = NA, width = 0.15) + 
+    scale_fill_manual(values = c("#46befa", "#185bb3", "#c4750d")) + 
+    scale_color_manual(values = c("#46befa", "#185bb3", "#c4750d")) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text.x = element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    labs(col = 'log') +
+    facet_wrap('group', scales = 'free')
+ggsave('figures/fig2/mitotic-oscillator_violins.pdf', w = 6, h = 8)
+```
+
+### UMAP of Cdk1 / Ccnb1 / APCC / Cdc20
+
+```{r}
+genes <- tibble(
+    gene = c(
+        'Cdk1', 
+        'Ccnb1', 
+        "Cdc20", 
+        "Anapc1", "Anapc2", 'Cdc37', 'Anapc4', "Anapc5", 'Cdc16', 'Anapc7', 'Cdc23', 'Anapc10', "Anapc11", "Anapc13", "Anapc15", "Anapc16"
+    ), 
+    group = c(
+        'Cdk1', 
+        'Ccnb1', 
+        "Cdc20", 
+        "APC/C", "APC/C", 'APC/C', 'APC/C', "APC/C", 'APC/C', 'APC/C', 'APC/C', 'APC/C', "APC/C", "APC/C", "APC/C", "APC/C"
+    )
+)
+p <- lapply(unique(genes$group), function(group) {
+    message(group)
+    genes2 <- genes$gene[genes$group == group]
+    if (length(genes2) > 1) {
+        df <- data.frame(
+            cell = WTs$Barcode, 
+            x = reducedDim(WTs, 'UMAP_from_Seurat')[, 1],
+            y = reducedDim(WTs, 'UMAP_from_Seurat')[, 2],
+            t(as.matrix(assay(WTs, 'logcounts')[genes2, ])), 
+            check.names = FALSE
+        ) %>% 
+            gather("gene", "expr", any_of(genes2)) %>% 
+            as_tibble() %>% 
+            group_by(x, y) %>% 
+            summarize(expr = mean(expr)) %>% 
+            mutate(expr = SCTools::bindByQuantiles(expr, q_low = 0.02, q_high = 0.98)) %>%
+            arrange(expr)
+    } else {
+        df <- tibble(
+            x = reducedDim(WTs, 'UMAP_from_Seurat')[, 1],
+            y = reducedDim(WTs, 'UMAP_from_Seurat')[, 2],
+            expr = SCTools::bindByQuantiles(assay(WTs, 'logcounts')[genes2,], q_low = 0.02, q_high = 0.98)
+        ) %>% arrange(expr)   
+    }
+    p <- ggplot(df, aes(x, y, col = expr)) + 
+        ggrastr::geom_point_rast(alpha = 0.2, size = 0.4, raster.dpi = 120) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA), 
+            aspect.ratio = 1
+        ) +
+        labs(col = ' ') +
+        scale_colour_gradientn(colours = c('#fdf1da', '#fdf1da', '#fce7c0', '#fcd286', '#a80000', '#701511')) + 
+        labs(x = '', y = '', title= group) 
+}) %>% cowplot::plot_grid(plotlist = .)
+ggsave('figures/fig2/UMAP_mitotic-oscillator_2.pdf', w = 7, h = 7)
+```
+
+### Plots of Emi1/Emi2
+
+> Pseudotime
+
+```{r}
+genes <- c('Ccnb1', 'Cdk1', 'Ccnb2', 'Fbxo5', 'Fbxo43')
+df <- assay(WTs, 'logcounts')[genes, ] %>% 
+    t() %>% 
+    as.matrix() %>% 
+    as.data.frame() %>% 
+    setNames(genes) %>% 
+    cbind(
+        colData(WTs) %>% 
+        as_tibble() %>%
+        select(annotation, pseudotime_slingshot), .
+    ) %>% 
+    as_tibble() %>%
+    pivot_longer(cols = all_of(genes), names_to = 'gene', values_to = 'expr') %>% 
+    mutate(gene = factor(gene, genes)) %>% 
+    filter(annotation != 'Unannot') %>% 
+    drop_na()
+p <- ggplot(df, aes(x = pseudotime_slingshot, y = expr, col = annotation, group = gene)) + 
+    ggrastr::geom_point_rast(shape = 16, alpha = 0.4, size = 2) + 
+    geom_smooth(method = "gam", formula = y ~ s(x, k = -12), size = 2, col = 'black', se = FALSE) +
+    scale_color_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) +
+    coord_cartesian(expand = FALSE) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    facet_grid(gene~.)
+ggsave('figures/fig2/Emis-pseudotime.pdf', w = 7, h = 7)
+```
+
+> UMAP
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+genes <- tibble(
+    gene = c(
+            'Fbxo5', 
+            'Fbxo43'
+        ), 
+    group = c(
+        "Emi1", "Emi2"
+    )
+)
+p <- lapply(unique(genes$group), function(group) {
+    message(group)
+    genes2 <- genes$gene[genes$group == group]
+    if (length(genes2) > 1) {
+        df <- data.frame(
+            cell = WTs$Barcode, 
+            x = reducedDim(WTs, 'UMAP')[, 1],
+            y = reducedDim(WTs, 'UMAP')[, 2],
+            t(as.matrix(assay(WTs, 'logcounts')[genes2, ])), 
+            check.names = FALSE
+        ) %>% 
+            gather("gene", "expr", any_of(genes2)) %>% 
+            as_tibble() %>% 
+            group_by(x, y) %>% 
+            summarize(expr = mean(expr)) %>% 
+            mutate(expr = SCTools::bindByQuantiles(expr, q_low = 0.02, q_high = 0.98)) %>%
+            arrange(expr)
+    } else {
+        df <- tibble(
+            x = reducedDim(WTs, 'UMAP')[, 1],
+            y = reducedDim(WTs, 'UMAP')[, 2],
+            expr = SCTools::bindByQuantiles(assay(WTs, 'logcounts')[genes2,], q_low = 0.02, q_high = 0.98)
+        ) %>% arrange(expr)   
+    }
+    p <- ggplot(df, aes(x, y, col = expr)) + 
+        ggrastr::geom_point_rast(alpha = 0.2, size = 0.4, raster.dpi = 120) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA), 
+            aspect.ratio = 1
+        ) +
+        labs(col = ' ') +
+        scale_colour_gradientn(colours = c('#fdf1da', '#fdf1da', '#fce7c0', '#fcd286', '#a80000', '#701511')) + 
+        labs(x = '', y = '', title= group) 
+}) %>% cowplot::plot_grid(plotlist = .)
+ggsave('figures/fig2/Emis-umap.pdf', w = 7, h = 7)
+```
+
+> Violin plots 
+
+```{r}
+genes <- tibble(
+    gene = c(
+        'Fbxo5', 
+        'Fbxo43'
+    ), 
+    group = c(
+        'Fbxo5', 
+        'Fbxo43'
+    )
+)
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+df <- assay(WTs, 'logcounts')[genes$gene, ] %>% t() %>% as('matrix') %>% setNames(genes$gene) %>%
+    as_tibble() %>%
+    cbind(annotation = WTs$annotation_hierarchy_1) %>%
+    as_tibble() %>%
+    pivot_longer(cols = all_of(genes$gene), names_to = 'gene', values_to = 'expr') %>% 
+    mutate(gene = factor(gene, genes$gene)) %>% 
+    left_join(genes)
+p <- ggplot(df, aes(x = annotation, y = expr)) + 
+    geom_violin(aes(fill = annotation), scale = 'width', alpha = 0.6, size = 0.4) + 
+    geom_boxplot(fill = 'white', col = 'black', outlier.shape = NA, width = 0.15) + 
+    scale_fill_manual(values = c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f", "#c4c4c4")) + 
+    scale_color_manual(values = c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f", "#c4c4c4")) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text.x = element_blank(), 
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    labs(col = 'log') +
+    facet_wrap('group')
+ggsave('figures/fig2/Emis_violins.pdf', w = 6, h = 4)
+```
+
+
+### Mitotic oscillator 
+
+> heatmap 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+
+# ------ Set up variables
+genes <- genes <- c(
+    'Ccnb1', 
+    'Ccnb2', 
+    'Cdk1', 
+
+    'Wee1', 
+    'Pkmyt1', 
+
+    'Cdc25a', 'Cdc25b', 'Cdc25c', 
+
+    # APCC
+    "Anapc1", "Anapc2", 'Cdc37', 'Anapc4', "Anapc5", 'Cdc16', 'Anapc7', 'Cdc23', 'Anapc10', "Anapc11", "Anapc13", "Anapc15", "Anapc16", 
+
+    'Ube2c', 
+    'Ube2s',
+
+    "Cdc20", "Cdh1",
+    
+    # MCC
+    "Rassf1", "Mad2l1", "Bub1b", "Bub3",
+
+    "Pttg1", #Securin
+    "Espl1", #Separase
+    "Fbxo5", #Emi1
+    "Fbxo43", #Emi2
+    "Plk1"
+    
+)
+
+
+# ------ Compute fold-changes
+df <- findMarkers(WTs, group = WTs$annotation_hierarchy_1) %>% 
+    as.list() %>% 
+    chuck('Progenitors') %>% 
+    as.data.frame() %>% 
+    select(starts_with('logFC')) %>% 
+    rownames_to_column("gene") %>% 
+    gather('cluster', 'log2FC_vs_Progenitors', -gene) %>% 
+    mutate(log2FC_vs_Progenitors = -log2FC_vs_Progenitors) %>% 
+    filter(gene %in% genes) %>% 
+    mutate(gene = factor(gene, levels = genes)) %>% 
+    mutate(cluster = str_replace(cluster, 'logFC.', '')) %>%
+    mutate(cluster = factor(cluster, levels = c("CyclingProgenitors", "Deuterosomal", "EarlyMCCs", "MCCs", "Unannot"))) %>%
+    filter(cluster %in% c("CyclingProgenitors", "Deuterosomal", "EarlyMCCs", "MCCs", "Unannot"))
+
+# ------ Get heatmap
+lims <- c(-2, 2)
+df$log2FC_vs_Progenitors[df$log2FC_vs_Progenitors > lims[2]] <- lims[2]
+df$log2FC_vs_Progenitors[df$log2FC_vs_Progenitors < lims[1]] <- lims[1]
+p <- ggplot(df, aes(x = gene, y = cluster, fill = log2FC_vs_Progenitors)) + 
+    geom_tile() + 
+    theme_bw() + 
+    scale_fill_gradient2(low = '#0050c9', mid = '#fff8f8', high = '#9e1a09', limits = lims)
+```
+

@@ -1,0 +1,1131 @@
+---
+title: "scRNAseq_MCCs_paper-figures"
+date: "2022-02-03"
+author: Jacques SERIZAY
+output:
+    html_document:
+        theme: flatly
+        highlight: tango
+        preserve_yaml: true
+        code_folding: show
+        df_print: tibble
+        toc: true
+        toc_float: true
+path: /home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures
+---
+
+Dependencies: 
+
+- hNSC CC annotations: /home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation
+- tradeSeq: /home/rsg/Projects/20210419_MCCs_WTs-figures
+
+```{r, include=FALSE}
+setwd('/home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures')
+require(tidyverse)
+require(magrittr)
+require(SingleCellExperiment)
+```
+
+### Plot annotations for WTs in UMAP 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+p <- tibble(
+    x = reducedDim(WTs, 'UMAP_from_Seurat')[,1], 
+    y = reducedDim(WTs, 'UMAP_from_Seurat')[,2], 
+    annot = WTs$annotation
+) %>% ggplot(aes(x, y, fill = annot)) + 
+    ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.025, raster.dpi = 200) + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+    theme_minimal() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+        panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+        legend.position = "none",
+        axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+        axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    coord_fixed(ratio = 1)
+ggsave('figures/fig1/WTs_annotations.pdf')
+```
+
+### Plot CC phase annots for WTs in UMAP 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+CellCyclePhase_hNSCs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/CellCyclePhase_hNSCs.rds')
+WTs$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(WTs$Barcode, CellCyclePhase_hNSCs$Barcode)]
+labels <- c(
+    'Neural G0' = 'G0', 
+    'G1' = 'G1', 
+    'G1/other' = 'G1', 
+    'Late G1' = 'G1', 
+    'S' = 'S', 
+    'S/G2' = 'S/G2', 
+    'G2/M' = 'G2/M', 
+    'M/Early G1' = 'M'
+)
+WTs$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(WTs$CellCyclePhase_hNSCs)], unique(labels))
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    select(annotation, CellCyclePhase_hNSCs_hierarchy_1) %>%
+    cbind(reducedDim(WTs, 'UMAP_from_Seurat') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble() %>% arrange(annotation)
+p <- ggplot(df, aes(x = UMAP1, y = UMAP2)) + 
+    ggrastr::geom_point_rast(aes(col = CellCyclePhase_hNSCs_hierarchy_1), shape = 16, alpha = ifelse(df$annotation == 'Unannot', 0.2, 0.4), size = 2) + 
+    theme_bw() +
+    scale_colour_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    ggtitle('Cell Cycle phase\nannotations (from hNSCs then aggregated)') +
+    labs(col = '')
+ggsave('figures/fig1/WTs_CC-phases.pdf', w = 7, h = 7)
+```
+
+### Barplot of CC genes expressed in each main class of WTs
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+expressed_genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .) %>%
+    mutate(
+        CyclingProgenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'CyclingProgenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'CyclingProgenitors') * PCT} ,
+        Progenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Progenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Progenitors') * PCT} ,
+        Deuterosomal = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Deuterosomal']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Deuterosomal') * PCT} ,
+        MCCs = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'MCCs']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'MCCs') * PCT}
+    ) %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>% 
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+df <- expressed_genes %>% 
+    group_by(cluster) %>% 
+    mutate(n = sum(expressed), ntot = length(gene)) %>% 
+    select(-gene, -expressed, -pathway) %>% distinct() %>% 
+    mutate(cluster = factor(cluster, c('CyclingProgenitors', 'Progenitors', 'Deuterosomal', 'MCCs')))
+p <- ggplot(df, aes(x = cluster, fill = cluster)) + 
+    geom_col(aes(y = ntot), alpha = 0.2) + 
+    geom_col(aes(y = n), alpha = 1) + 
+    scale_fill_manual(values = c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f")) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), panel.grid = element_blank(), legend.position = 'none') + 
+    labs(y = '# of CC-related genes expressed', x = '') + 
+    scale_y_continuous(expand = c(0, 0.05))
+ggsave(glue::glue('figures/fig1/WTs_detected-CC-genes_N-{N}_pct-{PCT}.pdf'), width = 3, height = 6)
+```
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+expressed_genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .) %>%
+    mutate(
+        CyclingProgenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'CyclingProgenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'CyclingProgenitors') * PCT} ,
+        Progenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Progenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Progenitors') * PCT} ,
+        Deuterosomal = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Deuterosomal']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Deuterosomal') * PCT} ,
+        MCCs = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'MCCs']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'MCCs') * PCT}
+    ) %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>% 
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+library(eulerr)
+v <- expressed_genes %>% 
+    group_by(cluster) %>% 
+    filter(expressed) %>% 
+    mutate(cluster = factor(cluster, c('CyclingProgenitors', 'Progenitors', 'Deuterosomal', 'MCCs'))) %>%
+    group_split() %>% 
+    lapply(function(x) pull(x, gene) %>% factor(unique(expressed_genes$gene))) %>% 
+    setNames(c('CyclingProgenitors', 'Progenitors', 'Deuterosomal', 'MCCs'))
+pdf(glue::glue('figures/fig1/WTs-venn_detected-CC-genes_N-{N}_pct-{PCT}2.pdf'))
+par(mar = c(8, 8, 8, 8))
+plot(
+    euler(v, shape = "ellipse"), 
+    quantities = TRUE, 
+    labels = list(
+        col = c("#266381", "#082b58", "#a37520", "#3f0f0f")
+    ), 
+    fill = c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f")
+)
+dev.off()
+```
+
+### Plot annotations for all cells and gene expression in UMAP
+
+```{r}
+bindD <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/WTs_2-replicates.rds')
+
+p <- tibble(
+    x = reducedDim(bindD, 'UMAP')[,1], 
+    y = reducedDim(bindD, 'UMAP')[,2], 
+    annot = bindD$annotation
+) %>% ggplot(aes(x, y, fill = annot)) + 
+    ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.025, raster.dpi = 200) + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+    theme_minimal() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+        panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+        legend.position = "none",
+        axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+        axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    coord_fixed(ratio = 1)
+ggsave('figures/fig1/WTs_all-cells_merged-annotations.pdf')
+
+genes <- c('Tubb3', 'Olig1', 'Mbp', 'C1qb', 'Col3a1', 'Mki67', 'Cdk1', 'Id1', 'Deup1', 'Tmem212')
+genes <- genes[genes %in% rownames(bindD)]
+p <- cowplot::plot_grid(nrow = 2, plotlist = lapply(genes, function(gene) {
+    tibble(    
+        expr = assay(bindD, 'logcounts')[gene,],
+        annot = factor(bindD$annotation)
+    ) %>% ggplot(aes(x = annot, y = expr, fill = annot)) + 
+        geom_violin(scale = 'width') + 
+        geom_boxplot(fill = 'white', col = 'black', outlier.shape = NA, width = 0.15) + 
+        theme_bw() + 
+        theme(
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            panel.ontop = FALSE,
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.2),
+            panel.grid.minor = element_line(size = 0.1),
+            legend.position = "none"
+        ) +
+        labs(x = '', y = '', col = '', title = gene) + 
+        scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) + 
+        theme(axis.text.x = element_blank())
+}))
+ggsave('figures/fig1/WTs_all-cells_marker-expression_violin.pdf', w = 20, h = 4)
+```
+
+### Plot UMAP_from_Seurat for WT subset batches 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    cbind(reducedDim(WTs, 'UMAP_from_Seurat') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble()
+p <- ggplot(df %>% group_by(batch) %>% slice_sample(n = 4000) %>% ungroup() %>% slice_sample(n = 8000), aes(x = UMAP1, y = UMAP2)) + 
+    ggrastr::geom_point_rast(aes(col = batch), alpha = 0.4, shape = 16, size = 2) + 
+    scale_color_manual(values = c('#e9aa35', '#0c76ac')) + 
+    theme_minimal() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+        panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+        legend.position = "bottom",
+        axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+        axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    theme(aspect.ratio = 1) + 
+    labs(col = 'Batches') +
+    coord_fixed(ratio = 1) + 
+    ggtitle('')
+ggsave('figures/fig1/WTs_batches2.pdf')
+```
+
+### Plot cluster stability (violin plots)
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+clusters <- c("CyclingProgenitors", "Progenitors", "Deuterosomal", "MCCs","Unannot")
+WTs$group <- factor(c(
+    "CyclingProgenitors" = "CyclingProgenitors", 
+    "Progenitors_I" = "Progenitors", 
+    "Progenitors_II" = "Progenitors", 
+    "EarlyDeuterosomal" = "Deuterosomal", 
+    "Deuterosomal" = "Deuterosomal", 
+    "LateDeuterosomal" = "Deuterosomal", 
+    "EarlyMCCs" = "MCCs", 
+    "MCCs" = "MCCs", 
+    "Unannot" = "Unannot"
+)[WTs$annotation], clusters)
+repeatClustering <- function(x) {
+    graph <- scran::buildSNNGraph(x, use.dimred = "corrected", k = 5, type = 'jaccard')
+    clus <- igraph::cluster_louvain(graph)$membership
+    d <- lapply(clusters, function(cl) {
+        lapply(sort(unique(clus)), function(c) {
+            a <- length(intersect(x$Barcode[x$group == cl], x$Barcode[clus == c]))
+            b <- length(union(x$Barcode[x$group == cl], x$Barcode[clus == c]))
+            a/b
+        }) %>% unlist()
+    }) %>% do.call(rbind, .)
+    rownames(d) <- clusters
+    conv <- sort(unique(clus))
+    names(conv) <- apply(d, 2, function(col) {clusters[which.max(col)]})
+    clus <- conv[clus] %>% names()
+    names(clus) <- x$Barcode 
+    return(factor(clus[WTs$Barcode], clusters))
+}
+evaluateRobustness <- function(x) {
+    lapply(1:nrow(x), function(nrow) {
+        row <- x[nrow, ]
+        so <- sort(table(row), decreasing = TRUE)
+        m <- so[1] / sum(so)
+        c <- names(so[1])
+        data.frame(
+            cell = rownames(x)[nrow], 
+            stability = m, 
+            cluster = clusters[as.numeric(c)]
+        )
+    }) %>% do.call(rbind, .)
+}
+cls <- parallel::mclapply(mc.cores = 18, 1:30, function(seed) {
+    message(seed)
+    set.seed(seed)
+    WTs_sub <- WTs[, sample(1:ncol(WTs), round(ncol(WTs)*0.8), replace = FALSE)]
+    repeatClustering(WTs_sub)
+}) %>% do.call(cbind, .) %>% evaluateRobustness()
+WTs$cluster_stability <- cls$stability
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    cbind(reducedDim(WTs, 'UMAP_from_Seurat') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble()
+p <- ggplot(df, aes(x = forcats::fct_rev(group))) + 
+    geom_violin(aes(y = cluster_stability, fill = group), scale = 'width') + 
+    geom_boxplot(aes(y = cluster_stability), width = 0.1, outlier.shape = NA, fill = 'white') + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac",  "#e9aa35", "#6d1f1f", "#c4c4c4")) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    ggtitle('')
+ggsave('figures/fig1/WTs_cluster-stability.pdf')
+```
+
+### Plot expression of markers in each cluster in violin plots
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+groups <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$group <- factor(groups[WTs$annotation], unique(groups))
+set.seed(1000)
+markers <- scran::findMarkers(
+    WTs, 
+    groups = WTs$group, 
+    design = as.matrix(data.frame('genotype' = as.numeric(factor(WTs$batch)))),
+    pval.type = 'any', 
+    BPPARAM = BiocParallel::MulticoreParam(12), 
+    full.stats = TRUE
+) 
+#
+top <- 5
+#
+df <- lapply(names(markers), function(annot) {
+    d <- markers[[annot]] %>% 
+        as.data.frame() %>% 
+        rownames_to_column('marker') %>% 
+        as_tibble() %>% 
+        select(
+            marker, p.value, FDR, ends_with('.logFC')
+        ) %>% 
+        transmute(marker, p.value, FDR, meanFC = rowMeans(select(., ends_with('.logFC')))) %>%
+        slice_max(meanFC, n = top) 
+    df <- tibble(cell = WTs$Barcode, cell_group = WTs$group)
+    df2 <- lapply(d$marker, function(g) {
+        expr <- SCTools::bindByQuantiles(assay(WTs, 'logcounts')[g, ])
+    }) %>% do.call(rbind, .) %>% t() %>% as.data.frame() %>% setNames(d$marker) %>% cbind(df, .) %>% as_tibble() %>% 
+        pivot_longer(cols = all_of(d$marker), names_to = 'gene', values_to = 'expr') %>% 
+        mutate(gene = factor(gene, d$marker)) %>% 
+        mutate(marker_group = factor(annot, names(markers)))
+}) %>% do.call(rbind, .) %>% 
+    group_by(cell, cell_group, marker_group) %>% 
+    summarize(mean_expr = mean(expr))
+p <- ggplot(df, aes(x = cell_group, y = mean_expr, fill = marker_group)) + 
+    geom_violin(scale = 'width') + 
+    geom_boxplot(width = 0.1, outlier.shape = NA, fill = 'white') + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac",  "#e9aa35", "#6d1f1f", "#c4c4c4")) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    facet_wrap('marker_group', scales = 'free', nrow = 1) +
+    ggtitle('')
+ggsave(glue::glue('figures/fig1/WTs-top{top}-group-markers.pdf'), h = 3, w = 5)
+
+```
+
+### Plot CC phase annotation for all cells in brain in a UMAP projection
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/WTs_2-replicates.rds')
+CellCyclePhase_hNSCs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/CellCyclePhase_hNSCs.rds')
+WTs$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(WTs$Barcode, CellCyclePhase_hNSCs$Barcode)]
+labels <- c(
+    'Neural G0' = 'G0', 
+    'G1' = 'G1', 
+    'G1/other' = 'G1', 
+    'Late G1' = 'G1', 
+    'S' = 'S', 
+    'S/G2' = 'S/G2', 
+    'G2/M' = 'G2/M', 
+    'M/Early G1' = 'M'
+)
+WTs$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(WTs$CellCyclePhase_hNSCs)], unique(labels))
+WTs$Ki67 <- case_when(as.vector(logcounts(WTs['Mki67',])) > 1 ~ 'Ki67+', TRUE ~ 'Ki67-')
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    select(annotation, CellCyclePhase_hNSCs_hierarchy_1, CellCyclePhase_hNSCs, Ki67) %>%
+    cbind(reducedDim(WTs, 'UMAP') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble() %>% arrange(CellCyclePhase_hNSCs_hierarchy_1)
+p <- ggplot(df, aes(x = forcats::fct_rev(annotation))) + 
+    geom_bar(aes(fill = CellCyclePhase_hNSCs_hierarchy_1)) + 
+    theme_bw() +
+    scale_fill_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    coord_flip() + 
+    labs(x = 'Annotation', fill = 'CC phase') +
+    facet_wrap(~Ki67, scales = 'free')  + 
+    theme(legend.position = 'bottom')
+ggsave('figures/fig1/WTs_all-cells_CC-phases_Mki67-pos-neg2.pdf', w = 7, h = 4)
+p <- cowplot::plot_grid(align = 'hv', axis = 'tblr',
+    ggplot(df, aes(x = UMAP1, y = UMAP2)) + 
+        ggrastr::geom_point_rast(aes(col = CellCyclePhase_hNSCs_hierarchy_1), shape = 16, alpha = ifelse(df$annotation == 'Unannot', 0.2, 0.4), size = 2) + 
+        theme_bw() +
+        scale_colour_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        ggtitle('Cell Cycle phase\nannotations (from hNSCs then aggregated)') +
+        labs(col = ''),
+    ggplot(df, aes(x = forcats::fct_rev(annotation))) + 
+        geom_bar(aes(fill = CellCyclePhase_hNSCs_hierarchy_1), position = position_fill(reverse = TRUE)) + 
+        theme_bw() +
+        scale_fill_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        coord_flip() + 
+        labs(x = 'Annotation', fill = 'CC phase') +
+        theme(legend.position = 'bottom'), 
+    nrow = 1
+)
+ggsave('figures/fig1/WTs_all-cells_CC-phases2.pdf', w = 10, h = 5)
+
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    select(annotation_hierarchy_1, CellCyclePhase_hNSCs_hierarchy_1, CellCyclePhase_hNSCs, Ki67) %>%
+    cbind(reducedDim(WTs, 'UMAP') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble() %>% arrange(CellCyclePhase_hNSCs_hierarchy_1) |> 
+    drop_na() |> 
+    filter(annotation_hierarchy_1 != 'Unannot')
+p <- cowplot::plot_grid(align = 'hv', axis = 'tblr',
+    ggplot(df, aes(x = UMAP1, y = UMAP2)) + 
+        ggrastr::geom_point_rast(aes(col = CellCyclePhase_hNSCs_hierarchy_1), shape = 16, alpha = ifelse(df$annotation_hierarchy_1 == 'Unannot', 0.2, 0.4), size = 2) + 
+        theme_bw() +
+    scale_fill_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        ggtitle('Cell Cycle phase\nannotations (from hNSCs then aggregated)') +
+        labs(col = ''),
+    ggplot(df, aes(x = forcats::fct_rev(annotation_hierarchy_1))) + 
+        geom_bar(aes(fill = CellCyclePhase_hNSCs_hierarchy_1), position = position_fill(reverse = TRUE)) + 
+        theme_bw() +
+    scale_fill_manual(values = c('#979797', '#979797', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        ) +
+        coord_flip() + 
+        labs(x = 'Annotation', fill = 'CC phase') +
+        theme(legend.position = 'bottom'), 
+    nrow = 1
+)
+ggsave('figures/fig1/WTs_all-cells_CC-phases3.pdf', w = 10, h = 5)
+```
+
+### Plot average expr. of CC genes expressed in each cluster as a violin plot
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot'
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+sumexp <- scuttle::aggregateAcrossCells(WTs, ids = WTs$annotation_hierarchy_1, statistics = 'mean', use.assay.type = 'logcounts')
+N <- 0.5
+PCT <- 0.20
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+expressed_genes <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs)) %>%
+    tibble(gene = .) %>%
+    mutate(
+        CyclingProgenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'CyclingProgenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'CyclingProgenitors') * PCT} ,
+        Progenitors = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Progenitors']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Progenitors') * PCT} ,
+        Deuterosomal = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Deuterosomal']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Deuterosomal') * PCT} ,
+        MCCs = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'MCCs']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'MCCs') * PCT},
+        Unannot = rowSums( logcounts(WTs[gene, WTs$annotation_hierarchy_1 == 'Unannot']) >= N ) >= {sum(WTs$annotation_hierarchy_1 == 'Unannot') * PCT}
+    ) %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') %>% 
+    left_join(unnest(cell_cycle_genes, cols = genes), by = c(gene = 'genes'))
+df <- expressed_genes %>% 
+    # filter(expressed) %>%
+    select(-expressed, -pathway) %>% 
+    left_join(
+        as_tibble(assay(sumexp), rownames = 'gene') %>% pivot_longer(-gene, names_to = 'cluster', values_to = 'expr')
+    ) %>% 
+    mutate(cluster = factor(cluster, levels(WTs$annotation_hierarchy_1)))
+p <- ggplot(df, aes(x = cluster, fill = cluster, y = expr)) + 
+    geom_violin(alpha = 1, scale = 'width') + 
+    geom_boxplot(col = 'black', fill = 'white', outlier.shape = NA, width = 0.15) + 
+    scale_fill_manual(values = c("#46befa", "#185bb3", "#e9aa35", "#6d1f1f", "#c4c4c4")) + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), panel.grid = element_blank(), legend.position = 'none') + 
+    labs(y = 'Expression of CC-related genes', x = '') + 
+    scale_y_continuous(expand = c(0, 0.05), limits = c(0, 4))
+ggsave(glue::glue('figures/fig1/WTs_CC-genes_levels-of-expression.pdf'), width = 3, height = 6)
+```
+
+### Plot trajectory and pseudotime in UMAP 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+set.seed(1000)
+WTs$Barcode <- paste0(WTs$Barcode, '_', WTs$batch)
+n <- scran::findMarkers(
+    WTs, 
+    groups = factor(WTs$annotation), 
+    pval.type = "any",
+    design = as.matrix(data.frame('genotype' = as.numeric(factor(WTs$batch)))),
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% lapply(., function(markers) {
+    df <- markers %>%
+        as.data.frame() %>% 
+        arrange(desc(summary.logFC)) %>%
+        rownames_to_column('marker') %>% 
+        '['(, 1:5)
+}) %>% 
+    do.call(rbind, .) %>%  
+    filter(summary.logFC > log2(2) & p.value < 0.05) %$%
+    marker %>% 
+    unique()
+WTs <- scater::runPCA(WTs)
+
+WTs_slingshot <- slingshot::slingshot(
+    WTs,
+    reducedDim = 'PCA', 
+    clusterLabels = 'annotation', 
+    start.clus = c('CyclingProgenitors'), 
+    end.clus = c('MCCs'), 
+    approx_points = 30
+)
+umap_lineage <- slingshot::slingCurves(slingshot::embedCurves(WTs_slingshot, "UMAP_from_Seurat"))[[1]]$s
+p <- tibble(
+    x = reducedDim(WTs, 'UMAP_from_Seurat')[, 1], 
+    y = reducedDim(WTs, 'UMAP_from_Seurat')[, 2], 
+    annotation = WTs$annotation
+) %>% 
+    ggplot() + 
+    ggrastr::geom_point_rast(aes(x, y, col = annotation), alpha = 0.4, shape = 16, size = 2) + 
+    geom_path(data = tibble(c_x = umap_lineage[, 1], c_y = umap_lineage[,2]), aes(c_x, c_y), size = 2, inherit.aes = FALSE) +
+    scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) + 
+    scale_color_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) + 
+    theme_minimal() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    theme(aspect.ratio = 1) + 
+    coord_fixed(ratio = 1)
+ggsave('figures/fig1/WTs_lineage-UMAP2.pdf')
+
+
+df <- colData(WTs) %>% 
+    as_tibble() %>%
+    select(annotation,  pseudotime_slingshot) %>%
+    cbind(reducedDim(WTs, 'UMAP_from_Seurat') %>% as.data.frame() %>% setNames(c('UMAP1', 'UMAP2'))) %>% as_tibble()
+p <- ggplot(df, aes(x = UMAP1, y = UMAP2)) + 
+    ggrastr::geom_point_rast(aes(col = pseudotime_slingshot), shape = 16, alpha = ifelse(is.na(df$pseudotime_slingshot), 0.1, 0.4), size = 2) + 
+    scale_colour_viridis_c() + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#bebebe'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#bebebe'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA),
+        aspect.ratio = 1
+    ) +
+    theme(aspect.ratio = 1) + 
+    labs(col = ' ') +
+    coord_fixed(ratio = 1)
+ggsave('figures/fig1/WTs-pseudotime-UMAP2.pdf', w = 7, h = 7)
+```
+
+### Plot expression along pseudotime (dotplot w/ fitted GAM)
+
+```{r}
+genes <- c('Mki67', 'Id1', 'Mcidas', 'Deup1', 'Tmem212')
+df <- assay(WTs, 'logcounts')[genes, ] %>% 
+    t() %>% 
+    as.matrix() %>% 
+    as.data.frame() %>% 
+    setNames(genes) %>% 
+    cbind(
+        colData(WTs) %>% 
+        as_tibble() %>%
+        select(annotation, pseudotime_slingshot), .
+    ) %>% 
+    as_tibble() %>%
+    pivot_longer(cols = all_of(genes), names_to = 'gene', values_to = 'expr') %>% 
+    mutate(gene = factor(gene, genes)) %>% 
+    filter(annotation != 'Unannot') %>% 
+    drop_na()
+p <- ggplot(df, aes(x = pseudotime_slingshot, y = expr, col = annotation, group = gene)) + 
+    ggrastr::geom_point_rast(shape = 16, alpha = 0.4, size = 2) + 
+    geom_smooth(method = "gam", formula = y ~ s(x, k = -12), size = 2, col = 'black', se = FALSE) +
+    scale_color_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) +
+    coord_cartesian(expand = FALSE) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    facet_grid(gene~.)
+ggsave('figures/fig1/WTs_expr-along-pseudotime2.pdf', w = 6, h = 1.5 * length(genes))
+```
+
+### Heatmap of expression along pseudotime
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+WTs$pseudotime <- WTs$pseudotime_slingshot
+WTs_sub <- WTs[, !is.na(WTs$pseudotime) & WTs$annotation != 'Unannot']
+set.seed(1000)
+n2 <- rownames(WTs_sub)[rowSums(counts(WTs_sub) > 0) > 50 & rowData(WTs_sub)$gene_biotype == 'protein_coding' & !is.na(rowData(WTs_sub)$gene_biotype)]
+WTs_sub <- WTs_sub[n2, ]
+
+# ---- Run tradeSeq 
+# set.seed(1000)
+# counts <- as.matrix(assay(WTs_sub, 'counts'))
+# pseudotime <- data.frame("1" = WTs_sub$pseudotime)
+# cellWeights <- data.frame("1" = rep(1, ncol(WTs_sub)))
+# design <- as.matrix(data.frame('genotype' = as.numeric(factor(WTs_sub$batch))))
+# WTs_tradeSeq <- tradeSeq::fitGAM(
+#     counts = counts, 
+#     pseudotime = pseudotime,  
+#     cellWeights = cellWeights, 
+#     U = design, 
+#     nknots = 7, 
+#     verbose = TRUE, 
+#     parallel = TRUE, 
+#     BPPARAM = BiocParallel::MulticoreParam(workers = 12)
+# )
+# saveRDS(WTs_tradeSeq, 'results/WTs_tradeSeq.rds')
+WTs_tradeSeq <- readRDS('/home/rsg/Projects/20210419_MCCs_WTs-figures/results/WTs_tradeSeq.rds')
+
+# ---- Which gene subset to focus on... 
+set.seed(1000)
+n <- scran::findMarkers(
+    WTs_sub, 
+    groups = factor(WTs_sub$annotation), 
+    pval.type = "any",
+    design = as.matrix(data.frame('genotype' = as.numeric(factor(WTs_sub$batch)))),
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% lapply(., function(markers) {
+    df <- markers %>%
+        as.data.frame() %>% 
+        arrange(desc(summary.logFC)) %>%
+        rownames_to_column('marker') %>% 
+        select(-starts_with('logFC')) 
+}) %>% 
+    do.call(rbind, .) %>%  
+    filter(summary.logFC >= log2(2) & p.value <= 0.01) %$%
+    marker %>% 
+    unique() %>% 
+    '['(. %in% rownames(WTs_sub))
+
+# ---- Fit gene expression
+set.seed(1000)
+fitted_exprs <- tradeSeq::predictSmooth(WTs_tradeSeq, n, nPoints = 200) %>% 
+    select(-lineage) %>% 
+    pivot_wider(names_from = time, values_from = yhat) %>% 
+    column_to_rownames('gene') %>%
+    apply(., 1, function(row) log2(row+1)) %>% 
+    t() %>%
+    as.data.frame() 
+scaled_exprs <- tradeSeq::predictSmooth(WTs_tradeSeq, n, nPoints = 200) %>% 
+    select(-lineage) %>% 
+    pivot_wider(names_from = time, values_from = yhat) %>% 
+    column_to_rownames('gene') %>%
+    apply(., 1, function(row) scale(log2((row+1)))) %>% 
+    t() %>%
+    as.data.frame() 
+
+# ---- Cluster heatmap
+set.seed(1000)
+toPlot <- scaled_exprs
+colnames(toPlot) <- paste0('V', 1:ncol(toPlot))
+toCluster <- scaled_exprs[30:180]
+colnames(toCluster) <- paste0('V', 1:ncol(toCluster))
+ks <- cluster::pam(as.matrix(toCluster), k = 15)$cluster
+
+# ---- Order genes in 5 groups
+clusters <- c(
+    '1' = 1, #2
+    '2' = 1,
+    '3' = 1, 
+    '4' = 3, 
+    '5' = 3, 
+    '6' = 1, 
+    '7' = 3, 
+    '8' = 1, #2 
+    '9' = 1, #2 
+    '10' = 3, 
+    '11' = 4, 
+    '12' = 5,
+    '13' = 4,
+    '14' = 5,
+    '15' = 5
+)[ks]
+ordered_genes <- lapply(seq_len(max(clusters))[seq_len(max(clusters)) %in% clusters], function(K) {
+    d <- toPlot[clusters == K, ]
+    pos <- dist(d) %>% seriation::seriate(method = 'Spectral') %>% seriation::get_order()
+    return(d[pos, ])
+}) %>% do.call(rbind, .) %>% row.names()
+p1 <- toPlot[ordered_genes, ] %>% 
+    rownames_to_column('gene') %>% 
+    pivot_longer(-gene, names_to = 'tp', values_to = 'expr') %>% 
+    mutate(tp = factor(tp, paste0('V', 1:200)), gene = factor(gene, rev(ordered_genes))) %>% 
+    mutate(expr = ifelse(expr > 1.5, 1.5, ifelse(expr < -1.5, -1.5, expr))) %>% 
+    ggplot(aes(x = tp, y = gene, fill = expr)) + 
+    ggrastr::geom_tile_rast() + 
+    scale_fill_distiller(type = 'div', palette = 'RdYlBu') +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.text=element_blank(),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    )
+
+df <- tibble(
+    annotation = factor(WTs_sub$annotation), 
+    pseudotime = WTs_sub$pseudotime
+) %>% filter(annotation != 'Unannot')
+p2 <- ggplot(df, aes(fill = annotation)) + 
+    geom_density(aes(x = pseudotime, y = ..count../n), col = NA, alpha = 0.6) + 
+    scale_color_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#a1a1a1")) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_blank(),
+        panel.background = ggplot2::element_blank(), 
+        panel.ontop = FALSE, 
+        panel.border = ggplot2::element_blank(),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid = ggplot2::element_blank(),
+        legend.position = "none",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    coord_cartesian(ylim = c(0, 8), expand = FALSE)
+p <- cowplot::plot_grid(p2, p1, ncol = 1, rel_heights = c(0.2, 1), align = 'vh', axis = 'tblr')
+ggsave('figures/fig1/WTs_heatmap_markers_ordered.pdf', height = 20, width = 5.8)
+```
+
+### GO of different clusters in the DEG during diff. 
+
+```{r}
+regulated_genes <- tibble(gene = ordered_genes, cluster = sort(clusters))
+gos <- lapply(unique(regulated_genes$cluster), function(K) {
+    g <- regulated_genes$gene[regulated_genes$cluster == K]
+    y <- gprofiler2::gost(g, 'mmusculus', significant = FALSE)
+    y$result %>% select(p_value, term_id, term_name) %>% arrange(p_value) %>% as_tibble()
+})
+lapply(seq_along(gos), function(K) {gos[[K]] %>% mutate(cluster = K) %>% filter(grepl('GO', term_id)) %>% slice_min(p_value, n = 50)}) %>% do.call(rbind, .) %>% pivot_wider(names_from = cluster, values_from = p_value) %>% arrange(match(term_id, goi))
+goi <- c("GO:0008283", "GO:0006260", "GO:0010001", "GO:0000278", "GO:0007059", "GO:0007051", "GO:0030261", "GO:0007098", "GO:0007099", "GO:0031023", "GO:0032886", "GO:0060271", "GO:0031514", "GO:0003351")
+df <- lapply(seq_along(gos), function(K) {gos[[K]] %>% mutate(cluster = K)}) %>% 
+    do.call(rbind, .) %>% 
+    filter(term_id %in% goi) %>% 
+    mutate(term_id = factor(term_id, rev(goi))) %>% 
+    arrange(as.numeric(term_id)) %>% 
+    mutate(term_name = factor(term_name, unique(term_name))) %>% 
+    mutate(logpval = ifelse(p_value < 1e-10, 10, -log10(p_value))) %>% 
+    mutate(cluster = factor(cluster)) %>% 
+    tidyr::complete(cluster, term_name, fill = list('logpval' = 0))
+p <- df %>% 
+    ggplot(aes(x = cluster, y = term_name, fill = logpval, size = logpval, alpha = logpval)) + 
+    geom_point(col = 'black', shape = 21) + 
+    scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+    scale_alpha_continuous() + 
+    theme_bw()
+ggsave('figures/fig1/WTs_clusters-GOs.pdf', w = 6, h = 5)
+```
+
+### WTs UMAP with average expr. of genes in each cluster
+
+```{r}
+reggenes <- readRDS('/home/rsg/Projects/20211102_scRNAseq_MCCs_reprocessing-cycle-pseudocycle/results/WTs_genes-regulated-during-differentiation.rds') |> 
+    enframe(name = "cluster", value = "gene") |> 
+    unnest()
+p <- data.frame(
+    cell = WTs$Barcode, 
+    x = reducedDim(WTs, 'UMAP_from_Seurat')[, 1],
+    y = reducedDim(WTs, 'UMAP_from_Seurat')[, 2],
+    t(as.matrix(assay(WTs, 'logcounts')[reggenes$gene, ])), 
+    check.names = FALSE
+) %>% 
+    gather("gene", "expr", any_of(reggenes$gene)) %>% 
+    as_tibble() %>% 
+    left_join(reggenes, by = 'gene') %>% 
+    group_by(x, y, cluster) %>% 
+    summarize(meanexpr = mean(expr)) %>% 
+    ggplot(aes(x, y, col = meanexpr)) + 
+    ggrastr::geom_point_rast(alpha = 0.2, size = 0.4, raster.dpi = 120) + 
+    theme_bw() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#d6d6d6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#d6d6d6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA), 
+        aspect.ratio = 1
+    ) +
+    labs(col = ' ') +
+    scale_colour_gradientn(colours = c('#fdf1da', '#fce7c0', '#fcd286', '#a80000', '#701511')) + 
+    facet_wrap('cluster') + 
+    labs(x = '', y = '') 
+ggsave('figures/fig1/WTs_clusters-UMAP2.pdf', w = 8, h = 9)
+```
+
+### Annotation of all WTs cells using SingleR + mouseBrain reference 
+
+```{r}
+bindD <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/WTs_2-replicates.rds')
+ref <- SingleR::MouseRNAseqData()
+SingleR_annots <- SingleR::SingleR(
+    bindD, 
+    ref, 
+    ref$label.fine, 
+    BPPARAM = BiocParallel::MulticoreParam(workers = 18)
+)
+bindD$SingleR_annotation <- SingleR_annots$labels
+table(original = bindD$annotation, singleR = bindD$SingleR_annotation)
+```
+
+### # of CC genes expressed in each cluster 
+
+```{r}
+WTs <- readRDS('/home/rsg/Projects/20211104_scRNAseq_MCCs_full-dataset_CC-phase-annotation/results/WTs_2-replicates.rds')
+cell_cycle_genes <- readRDS('/home/rsg/Projects/20201117_BrainMCCs_comparison-Deut-Cycling/cell_cycle_genes.rds')
+N <- 0.5
+PCT <- 0.20
+labels <- c(
+    "CyclingProgenitors" = 'CyclingProgenitors', 
+    "Progenitors_I" = 'Progenitors', 
+    "Progenitors_II" = 'Progenitors', 
+    "EarlyDeuterosomal" = 'Deuterosomal', 
+    "Deuterosomal" = 'Deuterosomal', 
+    "LateDeuterosomal" = 'Deuterosomal', 
+    "EarlyMCCs" = 'MCCs', 
+    "MCCs" = 'MCCs', 
+    "Unannot" = 'Unannot', 
+    "Neuroblasts" = "Neuroblasts", 
+    "OPCs" = "OPCs",
+    "Oligodendrocytes" = "Oligodendrocytes",
+    "Microglia" = "Microglia",
+    "Fibroblasts" = "Fibroblasts"
+)
+WTs$annotation_hierarchy_2 <- WTs$annotation
+WTs$annotation_hierarchy_1 <- factor(labels[WTs$annotation_hierarchy_2], unique(labels))
+genes_ <- unnest(cell_cycle_genes, cols = genes) %>% 
+    pull(genes) %>% 
+    unique() %>%
+    '['(. %in% rownames(WTs))
+expressed_genes <- lapply(levels(WTs$annotation_hierarchy_2), function(label) {
+    rowSums( logcounts(WTs[genes_, WTs$annotation_hierarchy_2 == label]) >= N ) >= {sum(WTs$annotation_hierarchy_2 == label) * PCT}
+}) %>% 
+    bind_cols() %>% 
+    setNames(levels(WTs$annotation_hierarchy_2)) %>% 
+    mutate(gene = genes_) %>% relocate(gene) %>% 
+    pivot_longer(-gene, names_to = 'cluster', values_to = 'expressed') 
+df <- expressed_genes %>% 
+    group_by(cluster) %>% 
+    mutate(n = sum(expressed), ntot = length(gene)) %>% 
+    select(-gene, -expressed) %>% distinct() %>% 
+    mutate(cluster = factor(cluster, levels(WTs$annotation_hierarchy_2)))
+p <- ggplot(df, aes(x = cluster, fill = cluster)) + 
+    geom_col(aes(y = ntot), alpha = 0.2) + 
+    geom_col(aes(y = n), alpha = 1) + 
+    scale_fill_manual(values = c("#46befa", "#0c76ac", "#185bb3", "#e4d729", "#e9aa35", "#c4750d", "#c4320d", "#6d1f1f", "#c4c4c4", "#352e2e", "#44cc78", "#436b0f", "#d12be7", "#23a0d1")) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), panel.grid = element_blank(), legend.position = 'none') + 
+    labs(y = '# of CC-related genes expressed', x = '') + 
+    scale_y_continuous(expand = c(0, 0.05))
+ggsave(glue::glue('figures/fig1/WTs_detected-CC-genes_N-{N}_pct-{PCT}__all-cells.pdf'), width = 3, height = 6)
+```

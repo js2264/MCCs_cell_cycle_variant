@@ -1,0 +1,358 @@
+---
+title: "scRNAseq_MCCs_paper-figures"
+date: "2022-02-03"
+author: Jacques SERIZAY
+output:
+    html_document:
+        theme: flatly
+        highlight: tango
+        preserve_yaml: true
+        code_folding: show
+        df_print: tibble
+        toc: true
+        toc_float: true
+path: /home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures
+---
+
+```{r, include=FALSE}
+setwd('/home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures')
+require(tidyverse)
+require(magrittr)
+require(SingleCellExperiment)
+require(scater)
+require(scran)
+require(coolerr)
+```
+
+## Compartment maps 
+
+```{r}
+devtools::load_all('~/repos/coolerr')
+p1 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT409_640kb_60M-pairs.cool', coords = glue::glue('chr1:5000000-150000000')) %>% 
+    plotCorrelatedMatrix(dpi = 500, limits = c(-1, 1)) 
+p2 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT507_640kb_60M-pairs.cool', coords = glue::glue('chr1:5000000-150000000')) %>%
+    plotCorrelatedMatrix(dpi = 500, limits = c(-1, 1)) 
+p3 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT520_640kb_60M-pairs.cool', coords = glue::glue('chr1:5000000-150000000')) %>%
+    plotCorrelatedMatrix(dpi = 500, limits = c(-1, 1)) 
+p <- cowplot::plot_grid(p1, p2, p3, nrow = 1)
+ggsave('figures/fig5/compartment-maps.pdf', width = 15, height = 5)
+```
+
+## Eigen vectors
+
+```{r}
+library(plyranges)
+eigen_AT409 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT409.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT409')
+eigen_AT520 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT520.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT520')
+eigen_AT507 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT507.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT507')
+eigens <- rbind(eigen_AT409, eigen_AT520, eigen_AT507)
+df <- filter(eigens, chrom == 'chr1', start >= 5000000, end <= 150000000) %>% 
+    group_by(sample) %>% 
+    mutate(E1 = zoo::rollmean(E1, k = 5, fill = NA, na.pad = TRUE, align = 'center')) 
+p <- ggplot(df, aes(x = start, y = E1, col = sample)) + 
+    geom_line() + 
+    theme_minimal() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+        panel.grid.minor = element_line(size = 0, colour = NA),
+        panel.grid.major.x = element_line(size = 0, colour = NA),
+        legend.position = "bottom",
+        axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+        axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) + 
+    geom_ribbon(aes(x = start, ymin = pmin(E1, 0), ymax = pmax(E1, 0), col = sample)) + 
+    scale_x_continuous(expand = c(0, 0)) + 
+    facet_grid(~sample)
+ggsave('figures/fig5/eigenvectors_chr1-5000000-150000000.pdf', w = 10, h = 8)
+```
+
+## Barplot of stable/switching compartments
+
+```{r}
+library(plyranges)
+eigen_AT409 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT409.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT409')
+eigen_AT520 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT520.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT520')
+eigen_AT507 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT507.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT507')
+x <- read_tsv('/home/rsg/Projects/20211206_MCCs_HiC_heteroK-euK/compartments/chrom_80kb.bins') %>% 
+    filter(!chrom %in% c('chrX', 'chrY', 'chrM')) %>%
+    makeGRangesFromDataFrame(starts.in.df.are.0based = TRUE) %>% 
+    shift(-1) %>% 
+    as_tibble() %>% 
+    mutate(id = paste0('bin_', 1:n())) %>% 
+    mutate(compartment_AT409 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT409, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(compartment_AT507 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT507, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(compartment_AT520 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT520, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(group = paste0(compartment_AT409, '_', compartment_AT507, '_', compartment_AT520)) %>%
+    drop_na() %>% 
+    select(group, starts_with('compart')) %>% 
+    group_by(group, compartment_AT409, compartment_AT507, compartment_AT520) %>% 
+    tally() %>% 
+    mutate(class = case_when(!group %in% c('A_A_A', 'B_B_B') ~ 'dynamic', TRUE ~ group )) %>%
+    mutate(group = factor(group, levels = {arrange(., desc(n)) %>% pull(group)})) 
+p <- cowplot::plot_grid(
+    ggplot(x, aes(x = 1, y = n, fill = forcats::fct_rev(class))) +
+        geom_col() + 
+        theme_minimal() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+            panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+            legend.position = "bottom",
+            axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+            axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 10
+        ), 
+    filter(x, class == 'dynamic') %>% 
+        arrange(rev(n)) %>% 
+        mutate(group = factor(group, group)) %>%
+        ggplot(aes(x = 1, y = n, fill = forcats::fct_rev(group))) +
+        geom_col() + 
+        theme_minimal() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.2, colour = '#797979'),
+            panel.grid.minor = element_line(size = 0.1, colour = '#797979'),
+            legend.position = "bottom",
+            axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+            axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 10
+        ), 
+    align = 'hv'
+)
+ggsave('figures/fig5/compartment-switching_genomic-bins.pdf')
+```
+
+## TAD maps
+
+```{r}
+p1 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT409_80kb_60M-pairs.cool', coords = glue::glue('chr1:50000000-100000000')) %>% 
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p2 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT507_80kb_60M-pairs.cool', coords = glue::glue('chr1:50000000-100000000')) %>%
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p3 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT520_80kb_60M-pairs.cool', coords = glue::glue('chr1:50000000-100000000')) %>%
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p <- cowplot::plot_grid(p1, p2, p3, nrow = 1)
+ggsave('figures/fig5/TAD-maps.pdf', width = 15, height = 5)
+p1 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT409_20kb_60M-pairs.cool', coords = glue::glue('chr1:68000000-73000000')) %>% 
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p2 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT507_20kb_60M-pairs.cool', coords = glue::glue('chr1:68000000-73000000')) %>%
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p3 <- cool2gi('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/AT520_20kb_60M-pairs.cool', coords = glue::glue('chr1:68000000-73000000')) %>%
+    plotMatrix(dpi = 500) + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())
+p <- cowplot::plot_grid(p1, p2, p3, nrow = 1)
+ggsave('figures/fig5/TAD-inset-maps.pdf', width = 15, height = 5)
+```
+
+## Dotplot of gene expression for condensin subunits, Top2a, Kif2a, etc.
+
+```{r}
+MTEC <- readRDS('~/Projects/20211108_scRNAseq_MTECs_intersection-of-coopted-factors/results/MTEC.rds')
+HAEC <- readRDS('~/Projects/20211109_scRNAseq_HAECs_intersection-of-coopted-factors/results/HAEC.rds')
+LaManno <- readRDS('~/Projects/20211110_scRNAseq_LaManno_intersection-of-coopted-factors/results/LaManno.rds')
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+genes <- c('Smc2', 'Smc4', 'Ncaph', 'Ncapd2', 'Ncapg', 'Ncaph2', 'Ncapd3', 'Ncapg2')
+genes = list(
+    "SMC2" = "Smc2", 
+    "SMC4" = "Smc4", 
+    # "NCAPH" = "Ncaph", 
+    # "NCAPD2" = "Ncapd2",
+    # "NCAPG" = "Ncapg", 
+    # "NCAPH2" = 'Ncaph2', 
+    # "NCAPD3" = 'Ncapd3', 
+    # "NCAPG2" = 'Ncapg2', 
+    "TOP2A" = 'Top2a',
+    "KIF4A" = 'Kif4'
+)
+colnames(WTs) <- WTs$Barcode
+colnames(MTEC) <- MTEC$Barcode
+HAEC$Barcode <- colnames(HAEC)
+p <- cowplot::plot_grid(plotlist = list(
+    assay(WTs, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = WTs$Barcode, annot = WTs$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        mutate(pct = scales::squish(pct, c(0, 0.5))) %>% 
+        ggplot(aes(y = forcats::fct_rev(annot), x = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('WTs') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(LaManno, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = LaManno$Barcode, annot = LaManno$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        mutate(pct = scales::squish(pct, c(0, 0.5))) %>% 
+        ggplot(aes(y = forcats::fct_rev(annot), x = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('LaManno') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(MTEC, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = MTEC$Barcode, annot = MTEC$annotation), by = 'cell') %>%
+        filter(!annot %in% c('Unannot', 'Unannot_1', 'Unannot_2', 'Unannot_3')) %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        mutate(annot = factor(annot, c("CyclingBasal", "Basal", "Suprabasal", "Ionocytes", "Deuterosomal", "MCCs"))) %>%
+        mutate(pct = scales::squish(pct, c(0, 0.5))) %>% 
+        ggplot(aes(y = forcats::fct_rev(annot), x = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('MTEC') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(HAEC, 'logcounts')[names(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = HAEC$Barcode, annot = HAEC$annotation), by = 'cell') %>%
+        filter(!annot %in% c('Unannot')) %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, names(genes))) %>%
+        mutate(annot = factor(annot, c("CyclingBasal", "Basal", "Suprabasal","Secretory", "Goblet", "Deuterosomal", "MCCs"))) %>%
+        mutate(pct = scales::squish(pct, c(0, 0.5))) %>% 
+        ggplot(aes(y = forcats::fct_rev(annot), x = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('HAEC') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    ), 
+    nrow = 1, align = 'hv', axis = 'tblr'
+)
+ggsave('figures/fig5/dotplot-condensins.pdf', w = 12, h = 2, limitsize = FALSE)
+```
+
+## Table of overrepresented GOs for genes in switching compartments
+
+```{r}
+library(plyranges)
+eigen_AT409 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT409.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT409')
+eigen_AT520 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT520.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT520')
+eigen_AT507 <- read_tsv('/home/rsg/Projects/20220110_MCCs_HiC_comparing-eigens/compartments/AT507.cis.vecs.tsv') %>% 
+    drop_na(E1) %>% mutate(end = end - 1) %>% 
+    mutate(width = end - start, sample = 'AT507')
+x <- read_tsv('/home/rsg/Projects/20211206_MCCs_HiC_heteroK-euK/compartments/chrom_80kb.bins') %>% 
+    filter(!chrom %in% c('chrX', 'chrY', 'chrM')) %>%
+    makeGRangesFromDataFrame(starts.in.df.are.0based = TRUE) %>% 
+    shift(-1) %>% 
+    as_tibble() %>% 
+    mutate(id = paste0('bin_', 1:n())) %>% 
+    mutate(compartment_AT409 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT409, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(compartment_AT507 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT507, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(compartment_AT520 = {join_overlap_left(as(., 'GRanges'), makeGRangesFromDataFrame(eigen_AT520, keep.extra.columns = TRUE)) %>% mutate(compartment = ifelse(E1 > 0, 'A', 'B'))}$compartment) %>% 
+    mutate(group = paste0(compartment_AT409, '_', compartment_AT507, '_', compartment_AT520)) %>%
+    drop_na() %>% 
+    group_by(group, compartment_AT409, compartment_AT507, compartment_AT520) %>% 
+    mutate(type = case_when(group == 'A_A_A' ~ 'stable_A', group == 'B_B_B' ~ 'stable_B', !{group %in% c('A_A_A', 'B_B_B')} & compartment_AT507 == 'A' ~ 'dyn_AT507-A', !{group %in% c('A_A_A', 'B_B_B')} & compartment_AT507 == 'B' ~ 'dyn_AT507-B')) %>% 
+    split(~type) %>% 
+    map(function(x) {makeGRangesFromDataFrame(x, keep.extra.columns = TRUE) %>% reduce() %>% mutate(type = unique(x$type))} ) %>% 
+    as("GRangesList") %>%
+    unlist()
+rtracklayer::export(x, 'results/compartments.gff')
+mm10_genes <- GenomicFeatures::genes(TxDb.Mmusculus.UCSC.mm10.knownGene::TxDb.Mmusculus.UCSC.mm10.knownGene)
+mm10_genes$ensembl <- AnnotationDbi::mapIds(
+    x = org.Mm.eg.db::org.Mm.eg.db, 
+    column = "ENSEMBL", 
+    keytype = "ENTREZID",
+    keys = mm10_genes$gene_id, 
+    multiVals = 'first'
+)
+mm10_genes <- mm10_genes[!is.na(mm10_genes$ensembl)]
+hits <- findOverlaps(x, mm10_genes)
+overlaps <- pintersect(x[queryHits(hits)], mm10_genes[subjectHits(hits)])
+percentOverlap <- width(overlaps) / width(mm10_genes[subjectHits(hits)])
+hits <- hits[percentOverlap > 0.5]
+mm10_genes$type <- NA
+mm10_genes$type[subjectHits(hits)] <- x$type[queryHits(hits)]
+switching_genes_go <- as_tibble(mm10_genes) %>% 
+    drop_na() %>% 
+    mutate(type = factor(type, c("stable_A", "stable_B", "dyn_AT507-A", "dyn_AT507-B"))) %>%
+    split(~type) %>% 
+    map(~pull(., ensembl)) %>% 
+    map(~gprofiler2::gost(., 'mmusculus'))
+map(
+    switching_genes_go, 
+    ~`[[`(., 'result') %>% 
+        as_tibble() %>% 
+        arrange(p_value) %>% 
+        filter(p_value < 0.001, source == 'GO:BP', term_size < 1000) %>% 
+        select(term_id, term_name, term_size, query_size, intersection_size, p_value)
+) %>% 
+    bind_rows(.id = 'group') %>% 
+    group_by(group) %>% 
+    split(~group) %>% 
+    writexl::write_xlsx('results/compartments_GO-BP.xlsx')
+```
+

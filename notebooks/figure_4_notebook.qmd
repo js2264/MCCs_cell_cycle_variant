@@ -1,0 +1,1258 @@
+---
+title: "scRNAseq_MCCs_paper-figures"
+date: "2022-02-03"
+author: Jacques SERIZAY
+output:
+    html_document:
+        theme: flatly
+        highlight: tango
+        preserve_yaml: true
+        code_folding: show
+        df_print: tibble
+        toc: true
+        toc_float: true
+path: /home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures
+---
+
+```{r, include=FALSE}
+setwd('/home/rsg/Projects/20220203_scRNAseq_MCCs_paper-figures')
+require(tidyverse)
+require(magrittr)
+require(SingleCellExperiment)
+require(scater)
+require(scran)
+```
+
+## Plot expression of cyclins as lineplots
+
+```{r cyclins 1}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+df <- rbind(
+    tibble(    
+        x = reducedDim(cyc, 'rotated')[,1], 
+        y = reducedDim(cyc, 'rotated')[,2], 
+        theta = cyc$pseudotime_angular,
+        class = factor('cyc', c('cyc', 'deuts')),
+        Ccnd2 = as.vector(logcounts(cyc['Ccnd2',])),
+        Ccne2 = as.vector(logcounts(cyc['Ccne2',])),
+        Ccna2 = as.vector(logcounts(cyc['Ccna2',])),
+        Ccnb1 = as.vector(logcounts(cyc['Ccnb1',]))
+    ) %>% pivot_longer(cols = c(-x, -y, -theta, -class), names_to='gene', values_to='expr') %>% mutate(gene = factor(gene, c('Ccnd2', 'Ccne2', 'Ccna2', 'Ccnb1'))),
+    tibble(    
+        x = reducedDim(deuts, 'rotated')[,1], 
+        y = reducedDim(deuts, 'rotated')[,2], 
+        theta = deuts$pseudotime_angular,
+        class = factor('deuts', c('cyc', 'deuts')),
+        Ccnd2 = as.vector(logcounts(deuts['Ccnd2',])),
+        Ccno = as.vector(logcounts(deuts['Ccno',])),
+        Ccna1 = as.vector(logcounts(deuts['Ccna1',])),
+        Ccnb1 = as.vector(logcounts(deuts['Ccnb1',]))
+    ) %>% pivot_longer(cols = c(-x, -y, -theta, -class), names_to='gene', values_to='expr') %>% mutate(gene = factor(gene, c('Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1')))
+)
+p <- ggplot(df, aes(x = theta, y = expr, col = gene, group = gene)) + 
+    geom_smooth(method = 'loess', span = 0.3) + 
+    xlim(c(0, 2*pi)) + 
+    theme_bw() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    )+
+    facet_wrap('class', ncol = 2) + 
+    scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi))
+ggsave('figures/fig4/cyc-deuts_4-cyclin-expression_profiles.pdf', w = 20, h = 5)
+
+df <- rbind(
+    tibble(    
+        CC = cyc$CellCyclePhase_hNSCs_hierarchy_1,
+        theta = cyc$pseudotime_angular, 
+        type = 'cyc'
+    ),
+    tibble(    
+        CC = deuts$CellCyclePhase_hNSCs_hierarchy_1,
+        theta = deuts$pseudotime_angular, 
+        type = 'deuts'
+    )
+)
+df$CC[df$CC == 'G0'] <- 'G1'
+p <- ggplot(df, aes(fill = CC)) + 
+    geom_density(aes(x = theta, y = ..count../n), col = NA, alpha = 0.6) + 
+    scale_color_manual(values = c('#c430e9', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    scale_fill_manual(values = c('#c430e9', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    facet_grid(~type) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_blank(),
+        panel.background = ggplot2::element_blank(), 
+        panel.ontop = FALSE, 
+        panel.border = ggplot2::element_blank(),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid = ggplot2::element_blank(),
+        legend.position = "none",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    coord_cartesian(ylim = c(0, 2), expand = FALSE)
+ggsave('figures/fig4/cyc-deuts_CC-annotation-distribution.pdf', w = 20, h = 5)
+```
+
+## Plot expression of cyclins as UMAP
+
+```{r cyclins 1}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+genes <- c('Ccnd2', 'Ccne2', 'Ccna2', 'Ccnb1')
+p1 <- lapply(genes, function(gene) {
+    message(gene)
+    df <- tibble(
+        x = reducedDim(cyc, 'rotated')[, 1],
+        y = reducedDim(cyc, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(cyc, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+    ) %>% arrange(expr)
+    p <- ggplot(df, aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', col = gene, title = gene) +
+        scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'))
+}) %>% cowplot::plot_grid(plotlist = ., nrow = 1)
+genes <- c('Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1')
+p2 <- lapply(genes, function(gene) {
+    message(gene)
+    df <- tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+    ) %>% arrange(expr)
+    p <- ggplot(df, aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', col = gene, title = gene) +
+        scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'))
+}) %>% cowplot::plot_grid(plotlist = ., nrow = 1)
+p <- cowplot::plot_grid(p1, p2, nrow = 2)
+ggsave('figures/fig4/cyc-deuts_4-cyclin-expression_UMAP.pdf', w = 20, h = 10)
+```
+
+```{r cyclins 2}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+genes <- c('Trp27', 'Cdkn1a', 'Plk1', 'Plk4', 'Cdk1', 'Cdc20')
+p1 <- lapply(genes, function(gene) {
+    message(gene)
+    df <- tibble(
+        x = reducedDim(cyc, 'rotated')[, 1],
+        y = reducedDim(cyc, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(cyc, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+    ) %>% arrange(expr)
+    p <- ggplot(df, aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', col = gene, title = gene) +
+        scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'))
+}) %>% cowplot::plot_grid(plotlist = ., nrow = 1)
+p2 <- lapply(genes, function(gene) {
+    message(gene)
+    df <- tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+    ) %>% arrange(expr)
+    p <- ggplot(df, aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', col = gene, title = gene) +
+        scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'))
+}) %>% cowplot::plot_grid(plotlist = ., nrow = 1)
+p <- cowplot::plot_grid(p1, p2, nrow = 2)
+ggsave('figures/fig4/cyc-deuts_other-genes-expression_UMAP.pdf', w = 20, h = 10)
+```
+
+## Calculate correlations between cyclins
+
+```{r}
+exprs <- readRDS('/home/rsg/Projects/20210707_scRNAseq_subcycles_gene-module-expression/results/cyc-deuts_exprs.rds')
+cyclins_expr <- tibble(
+    cyc_Ccna1 = filter(exprs, cells == 'cyc', gene == 'Ccna1')$expr, 
+    cyc_Ccna2 = filter(exprs, cells == 'cyc', gene == 'Ccna2')$expr, 
+    cyc_Ccnb1 = filter(exprs, cells == 'cyc', gene == 'Ccnb1')$expr, 
+    cyc_Ccnd2 = filter(exprs, cells == 'cyc', gene == 'Ccnd2')$expr, 
+    cyc_Ccne2 = filter(exprs, cells == 'cyc', gene == 'Ccne2')$expr, 
+    cyc_Ccno = filter(exprs, cells == 'cyc', gene == 'Ccno')$expr, 
+    deuts_Ccna1 = filter(exprs, cells == 'deuts', gene == 'Ccna1')$expr, 
+    deuts_Ccna2 = filter(exprs, cells == 'deuts', gene == 'Ccna2')$expr, 
+    deuts_Ccnb1 = filter(exprs, cells == 'deuts', gene == 'Ccnb1')$expr, 
+    deuts_Ccnd2 = filter(exprs, cells == 'deuts', gene == 'Ccnd2')$expr, 
+    deuts_Ccne2 = filter(exprs, cells == 'deuts', gene == 'Ccne2')$expr,
+    deuts_Ccno = filter(exprs, cells == 'deuts', gene == 'Ccno')$expr
+) 
+cor.test(cyclins_expr$cyc_Ccnd2, cyclins_expr$deuts_Ccnd2)$estimate
+cor.test(cyclins_expr$cyc_Ccnb1, cyclins_expr$deuts_Ccnb1)$estimate
+cor.test(cyclins_expr$cyc_Ccne2, cyclins_expr$deuts_Ccno)$estimate
+cor.test(cyclins_expr$cyc_Ccna2, cyclins_expr$deuts_Ccna1)$estimate
+```
+
+## Plot graph of correlations (calculated directly on logcounts)
+
+```{r}
+cor_threshold <- 0.3
+# df_cyc <- logcounts(cyc) %>% data.matrix() %>% as_tibble(rownames = 'gene') %>% pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% filter(gene %in% exprs$gene) %>% group_by(gene)
+# cyc_cyclin_cors <- lapply(c('Ccnd2', 'Ccne2', 'Ccna2', 'Ccnb1'), function(cyclin) {
+#     temp_cyclin_expr <- df_cyc %>% filter(gene == cyclin) %>% pull(expr)
+#     cors <- BiocParallel::bplapply(group_split(df_cyc), function(d) {
+#         tibble(
+#             cyclin = cyclin, 
+#             gene = unique(d$gene), 
+#             cor.test(d$expr, temp_cyclin_expr, method = 'spearman') %>% broom::tidy() %>% select(estimate, p.value)
+#         )
+#     }, BPPARAM = BiocParallel::MulticoreParam(workers = 16)) %>% bind_rows()
+# }) %>% bind_rows()
+cyc_cyclin_cors <- readRDS('/home/rsg/Projects/20211103_scRNAseq_MCCs_cyc-deuts-transcriptional-activation/results/cyc_cyclin_cors.rds')
+
+# df_deuts <- logcounts(deuts) %>% data.matrix() %>% as_tibble(rownames = 'gene') %>% pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% filter(gene %in% exprs$gene) %>% group_by(gene)
+# deuts_cyclin_cors <- lapply(c('Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1'), function(cyclin) {
+#     temp_cyclin_expr <- df_deuts %>% filter(gene == cyclin) %>% pull(expr)
+#     cors <- BiocParallel::bplapply(group_split(df_deuts), function(d) {
+#         tibble(
+#             cyclin = cyclin, 
+#             gene = unique(d$gene), 
+#             cor.test(d$expr, temp_cyclin_expr, method = 'spearman') %>% broom::tidy() %>% select(estimate, p.value)
+#         )
+#     }, BPPARAM = BiocParallel::MulticoreParam(workers = 16)) %>% bind_rows()
+# }) %>% bind_rows()
+deuts_cyclin_cors <- readRDS('/home/rsg/Projects/20211103_scRNAseq_MCCs_cyc-deuts-transcriptional-activation/results/deuts_cyclin_cors.rds')
+# genes -> associated with cyclins with highest correlation
+gene_list <- c(
+    cyc_cyclin_cors %>% filter(estimate >= cor_threshold & estimate < 1 & p.value <= 0.01) %>%  group_by(gene) %>% slice_max(estimate, n = 1) %>% split(.$cyclin) %>% map(pull, gene) %>% setNames(paste0('cyc_', names(.))),
+    deuts_cyclin_cors %>% filter(estimate >= cor_threshold & estimate < 1 & p.value <= 0.01) %>%  group_by(gene) %>% slice_max(estimate, n = 1) %>% split(.$cyclin) %>% map(pull, gene) %>% setNames(paste0('deuts_', names(.)))
+)
+lengths(gene_list)
+
+set.seed(2000)
+g_cyc <- cyc_cyclin_cors %>% 
+    filter(gene %in% unlist(gene_list[1:4]), estimate >= 0, estimate < 1, p.value <= 0.01) %>%
+    tidygraph::as_tbl_graph(directed = FALSE) %>% 
+    tidygraph::activate(nodes) %>% 
+    mutate(label = ifelse(name %in% c('Ccnd2', 'Ccne2', 'Ccna2', 'Ccnb1'), name, '')) %>%
+    mutate(class = factor(ifelse(label == '', 0, 1), c(0, 1))) %>%
+    tidygraph::activate(edges) %>% 
+    mutate(from_name = tidygraph::.N()$name[tidygraph::.E()$from]) %>%
+    mutate(to_name = tidygraph::.N()$name[tidygraph::.E()$to]) %>% 
+    tidygraph::activate(nodes) %>% 
+    mutate(group = c(names(gene_list)[1:4], unlist(lapply(tail(name, -4), function(x) {r <- names(which(unlist(purrr::map(gene_list[1:4], ~ x %in% .x))))}))))  %>%
+    mutate(group = factor(group, c('cyc_Ccnd2', 'cyc_Ccne2', 'cyc_Ccna2', 'cyc_Ccnb1')))
+p <- g_cyc %>% 
+    ggraph::ggraph('fr', weights = estimate) + 
+    ggraph::geom_edge_link(aes(alpha = estimate, width = estimate)) + 
+    ggraph::geom_node_point(aes(size = class, col = group)) + 
+    # ggraph::geom_node_text(aes(label = label)) + 
+    scale_alpha_continuous(range = c(0.1, 0.4)) +
+    scale_colour_manual(values = scales::hue_pal()(7)[c(1, 2, 5, 6)]) +
+    theme_void() + 
+    theme(legend.position = 'none')
+ggsave('figures/fig4/cyc_cyclins-graph.pdf', w = 8, h = 8)
+
+set.seed(2000)
+g_deuts <- deuts_cyclin_cors %>% 
+    filter(gene %in% unlist(gene_list[5:8]), estimate > 0, estimate < 1, p.value <= 0.01) %>%
+    mutate(estimate = estimate) %>%
+    tidygraph::as_tbl_graph(directed = FALSE) %>% 
+    tidygraph::activate(nodes) %>% 
+    mutate(label = ifelse(name %in% c('Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1'), name, '')) %>%
+    mutate(class = factor(ifelse(label == '', 0, 1), c(0, 1))) %>%
+    tidygraph::activate(edges) %>% 
+    mutate(from_name = tidygraph::.N()$name[tidygraph::.E()$from]) %>%
+    mutate(to_name = tidygraph::.N()$name[tidygraph::.E()$to]) %>% 
+    tidygraph::activate(nodes) %>% 
+    mutate(group = c(names(gene_list)[5:8], unlist(lapply(tail(name, -4), function(x) {r <- names(which(unlist(purrr::map(gene_list[5:8], ~ x %in% .x))))}))))  %>%
+    mutate(group = factor(group, c('deuts_Ccnd2', 'deuts_Ccno', 'deuts_Ccna1', 'deuts_Ccnb1')))
+p <- g_deuts %>% 
+    ggraph::ggraph('fr', weights = estimate) + 
+    ggraph::geom_edge_link(aes(alpha = estimate, width = estimate)) + 
+    ggraph::geom_node_point(aes(size = class, col = group)) + 
+    # ggraph::geom_node_text(aes(label = label)) + 
+    scale_alpha_continuous(range = c(0.1, 0.4)) +
+    scale_colour_manual(values = scales::hue_pal()(7)[c(1, 3, 4, 6)]) +
+    theme_void() + 
+    theme(legend.position = 'none')
+ggsave('figures/fig4/deuts_cyclins-graph.pdf', w = 8, h = 8)
+```
+
+## Plot GO for gene_list 
+
+```{r}
+goi <- c(
+    "DNA replication" = "GO:0006260", #
+    "DNA repair" = "GO:0006281", #
+    "MCM complex" = "GO:0042555", #
+
+    "basement membrane" = "GO:0005604", #
+    "collagen-containing extracellular matrix" = "GO:0062023", #
+
+    "centriole assembly" = "GO:0098534", #
+    "multi-ciliated epithelial cell differentiation" = "GO:1903251", #
+
+    "motile cilium" = "GO:0031514", #
+    "cilium movement" = "GO:0003341", #
+    "ciliary basal body" = "GO:0036064", 
+
+    "sister chromatid segregation" = "GO:0000819", #
+
+    "spindle pole" = "GO:0000922", 
+    "spindle organization" = "GO:0007051", 
+    
+    "regulation of mitotic metaphase/anaphase transition" = "GO:0030071", 
+    "cytokinesis" = "GO:0000910", 
+    "anaphase-promoting complex binding" = "GO:0010997" 
+)
+gos <- parallel::mclapply(mc.cores = length(gene_list), names(gene_list), function(K) {
+    g <- gene_list[[K]]
+    if (length(g) > 1) {
+        gprofiler2::set_base_url('https://biit.cs.ut.ee/gprofiler_archive3/e102_eg49_p15/')
+        gprofiler2::set_base_url('https://biit.cs.ut.ee/gprofiler/')
+        y <- gprofiler2::gost(g, 'mmusculus', significant = FALSE)
+        z <- y$result %>% select(p_value, term_id, term_name) %>% arrange(p_value) %>% as_tibble() %>% mutate(group = K)
+        return(z)
+    } else {NULL}
+}) %>% setNames(names(gene_list)) %>% bind_rows() 
+p <- filter(gos, term_id %in% goi) %>%
+    mutate(term_name = factor(term_name, rev(names(goi)))) %>% 
+    mutate(group = factor(group, c("cyc_Ccne2", "cyc_Ccna2", "cyc_Ccnb1", "deuts_Ccnd2", "deuts_Ccno", "deuts_Ccna1", "deuts_Ccnb1"))) %>% 
+    # mutate(group = factor(group, c("cyc_Ccne2", "cyc_Ccna2-b1", "cyc_Ccna2", "cyc_Ccnb1", "deuts_Ccnd2", "deuts_Ccno", "deuts_Ccna1-b1", "deuts_Ccna1", "deuts_Ccnb1"))) %>% 
+    # mutate(group = factor(group, c("cyc_Ccne2", "cyc_Ccna2", "cyc_Ccnb1", "deuts_Ccnd2", "deuts_Ccno", "deuts_Ccna1", "deuts_Ccnb1", 'onlyCcna2', 'onlyCcnb1', 'shared'))) %>% 
+    mutate(logpval = -log10(p_value)) %>%
+    mutate(logpval = scales::squish(logpval, range = c(0, 10))) %>%
+    ggplot(aes(x = group, y = term_name, fill = group, size = logpval, alpha = logpval)) + 
+    geom_point(shape = 21, col = '#00000021') + 
+    scale_fill_manual(values = scales::hue_pal()(7)[c(2, 5, 6, 1, 3, 4, 6)]) + 
+    # scale_fill_manual(values = scales::hue_pal()(7)[c(2, 5, 5, 6, 1, 3, 4, 4, 6)]) + 
+    scale_size_continuous(range = c(0.3, 8)) + 
+    scale_alpha_continuous(range = c(0.3, 1)) + 
+    theme_bw(base_size = 18) + 
+    theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+ggsave('figures/fig4/GOs_coordinated-genes.pdf', w = 8.7, h = 6)
+```
+
+## Table of correlation between each gene in gene_list and cyclins in cyc/deuts
+
+```{r}
+genes <- unique(unlist(gene_list))
+df <- full_join(
+    filter(cyc_cyclin_cors, gene %in% genes) %>%
+        filter(p.value <= 0.01) %>% 
+        select(-p.value) %>% 
+        pivot_wider(names_from = cyclin, values_from = estimate) %>% 
+        rename_with(.cols = contains('Cc'), function(x) {paste0("cyclingProgenitors_", x)}) %>% 
+        left_join(
+            tibble(
+                gene = genes,
+                most_correlated_with_in_cyclingProgenitors = sapply(genes, function(x) {names(gene_list[1:4])[sapply(gene_list[1:4], function(y) {x %in% y})] %>% ifelse(length(.) > 0, ., '')} %>% str_replace('cyc_', ''))
+            )
+        ),
+    filter(deuts_cyclin_cors, gene %in% genes) %>%
+        filter(p.value <= 0.01) %>% 
+        select(-p.value) %>% 
+        pivot_wider(names_from = cyclin, values_from = estimate) %>% 
+        rename_with(.cols = contains('Cc'), function(x) {paste0("deuterosomalCells_", x)}) %>% 
+        left_join(
+            tibble(
+                gene = genes,
+                most_correlated_with_in_deuterosomalCells = sapply(genes, function(x) {names(gene_list[5:8])[sapply(gene_list[5:8], function(y) {x %in% y})] %>% ifelse(length(.) > 0, ., '')} %>% str_replace('deuts_', ''))
+            )
+        ), 
+        by = 'gene'
+) %>% 
+    mutate(most_correlated_with_in_cyclingProgenitors = ifelse(is.na(most_correlated_with_in_cyclingProgenitors), '', most_correlated_with_in_cyclingProgenitors)) %>% 
+    mutate(most_correlated_with_in_deuterosomalCells = ifelse(is.na(most_correlated_with_in_deuterosomalCells), '', most_correlated_with_in_deuterosomalCells))
+writexl::write_xlsx(df, 'results/correlation-gene-cyclins_cyc-deuts.xlsx')
+```
+
+## Plot UMAP of average expression for correlated genes 
+
+```{r}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+q <- 0.025
+#
+p <- cowplot::plot_grid(
+    tibble(
+        x = reducedDim(cyc, 'rotated')[, 1],
+        y = reducedDim(cyc, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(cyc, 'logcounts')[gene_list[['cyc_Ccne2']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccne2') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[2])),
+    tibble(
+        x = reducedDim(cyc, 'rotated')[, 1],
+        y = reducedDim(cyc, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(cyc, 'logcounts')[gene_list[['cyc_Ccna2']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccna2') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[5])),
+    tibble(
+        x = reducedDim(cyc, 'rotated')[, 1],
+        y = reducedDim(cyc, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(cyc, 'logcounts')[gene_list[['cyc_Ccnb1']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 2.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccnb1') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[6])),
+    ggplot() + theme_void(), 
+
+    tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene_list[['deuts_Ccnd2']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccnd2') +
+        scale_fill_gradientn(colours = c('#fce7c0', '#fce7c0', scales::hue_pal()(7)[1])),
+    tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene_list[['deuts_Ccno']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccno') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[3])),
+    tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene_list[['deuts_Ccna1']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccna1') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[4])),
+    tibble(
+        x = reducedDim(deuts, 'rotated')[, 1],
+        y = reducedDim(deuts, 'rotated')[, 2],
+        expr = SCTools::bindByQuantiles(assay(deuts, 'logcounts')[gene_list[['deuts_Ccnb1']],] %>% colMeans(), q_low = q/2, q_high = 1-q/2)
+        ) %>% 
+        arrange(expr) %>% 
+        ggplot(aes(x, y, fill = expr)) + 
+        ggrastr::geom_point_rast(shape = 21, alpha = 0.5, size = 1.5, stroke = 0.05, raster.dpi = 200) + 
+        theme_bw() + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            legend.position = "bottom",
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA),
+            aspect.ratio = 1
+        )+
+        labs(x = '', y = '', title = 'Ccnb1') +
+        scale_fill_gradientn(colours = c('#fce7c0', scales::hue_pal()(7)[c(6)])),
+    ncol = 4
+)
+ggsave('figures/fig4/UMAP_coordinated-genes.pdf', w = 10, h = 6)
+```
+
+## Plot temporal expression of cyclins as a heatmap
+
+```{r cyclins 2}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+exprs <- readRDS('/home/rsg/Projects/20210707_scRNAseq_subcycles_gene-module-expression/results/cyc-deuts_exprs.rds')
+cdks_cyclins <- read.table('/home/rsg/Projects/20210414_MCCs_atypical-cyclins_APCC/data/cdks-cyclins.txt', header = TRUE) %>%
+    as_tibble() %>% 
+    filter(class != 'transcriptional') %>%
+    mutate(type = factor(type), protein = factor(protein), class = factor(class)) 
+all_genes <- rbind(
+    cdks_cyclins, 
+    tibble(
+        type = "Rb", 
+        protein = c('Rb1', 'Rbl1', 'Rbl2'), 
+        class = c('inhibitor', 'co-repressor', 'co-repressor') 
+    ), 
+    tibble(
+        type = "Chk", 
+        protein = c('Atr', 'Atm', 'Chek1', 'Chek2'), 
+        class = c('sensor', 'sensor', 'effector', 'effector') 
+    )
+)
+p <- cowplot::plot_grid(plotlist = lapply(c('cyc', 'deuts'), function(group) {
+    d <- exprs %>% 
+        left_join(all_genes, by = c(gene = 'protein')) %>%
+        drop_na(type, class) %>%
+        filter(cells == group) %>% 
+        # filter(cells == group, type == 'cyclin') %>% 
+        mutate(gene = factor(gene, rev(all_genes$protein))) %>% 
+        mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+    ggplot(d, aes(x = pseudotime, y = gene, fill = expr)) + 
+    ggrastr::geom_tile_rast() + 
+    theme_bw(base_size = 8) + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "none",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    )+
+    scale_fill_distiller(type = 'div', palette = 'RdYlBu', limits = c(-1, 3)) + 
+    scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+    labs(x = '', y = '')
+}), nrow = 1)
+ggsave('figures/fig4/cyc-deuts_main-cyclin-expression_heatmap_3.pdf', w = 11.5, h = 7)
+```
+
+## Plot expression of cyclins IN LA MANNO as lineplots
+
+```{r cyclins 1}
+LaManno <- readRDS('/home/rsg/Projects/20211110_scRNAseq_LaManno_intersection-of-coopted-factors/results/LaManno.rds')
+set.seed(1000)
+design <- model.matrix(data = colData(LaManno), ~Batch+Replicate+Age+ChipID) 
+design <- design[, !{colnames(design) %in% limma::nonEstimable(design)}]
+marker_genes <- scran::findMarkers(
+    LaManno, 
+    groups = factor(LaManno$annotation), 
+    pval.type = "any",
+    # design = design,
+    BPPARAM = BiocParallel::MulticoreParam(12)
+) %>% lapply(., function(markers) {
+    df <- markers %>%
+        as.data.frame() %>% 
+        arrange(desc(summary.logFC)) %>%
+        rownames_to_column('marker') %>% 
+        dplyr::select(-starts_with('logFC')) 
+}) %>% 
+    do.call(rbind, .) %>%  
+    dplyr::filter(summary.logFC >= log2(2) & p.value <= 0.01) %$%
+    marker %>% 
+    unique() %>% 
+    '['(. %in% rownames(LaManno))
+deuts_lamanno <- LaManno[, LaManno$annotation == 'Deuterosomal']
+deuts_lamanno$original_cluster <- deuts_lamanno$annotation
+set.seed(1000)
+deuts_lamanno <- runPCA(deuts_lamanno, subset_row = marker_genes, name = 'corrected')
+deuts_lamanno <- readRDS('results/deuts_lamanno_processing.rds')
+set.seed(100)
+deuts_lamanno <- runTSNE(deuts_lamanno, dimred = "corrected")
+set.seed(200)
+deuts_lamanno <- runUMAP(deuts_lamanno, dimred = "corrected")
+set.seed(200)
+graph <- buildSNNGraph(deuts_lamanno, use.dimred = "corrected", k = 3, type = 'jaccard')
+reducedDim(deuts_lamanno, "force") <- igraph::layout_with_fr(graph)
+reducedDim(deuts_lamanno, 'rotated') <- reducedDim(deuts_lamanno, 'corrected')[, 1:2]
+reducedDim(deuts_lamanno, 'rotated')[,2] <- reducedDim(deuts_lamanno, 'rotated')[,2] - 2.5
+reducedDim(deuts_lamanno, 'rotated')[,1] <- - reducedDim(deuts_lamanno, 'rotated')[,1] -1
+thetas <- apply(reducedDim(deuts_lamanno, 'rotated')[,1:2], 1, function(row) {
+    an <- atan((row[2]) / (row[1]))
+    if (row[1] > 0 & row[2] > 0) {# First quarter
+        an <- an
+    }
+    else if (row[1] <= 0 & row[2] > 0) {# Second quarter
+        an <- pi + an
+    }
+    else if (row[1] <= 0 & row[2] <= 0) {# Third quarter
+        an <- pi + an
+    }
+    else if (row[1] > 0 & row[2] <= 0) {# Fourth quarter
+        an <- 2*pi + an
+    }
+    return(an)
+})
+thetas <- sapply(thetas, function(theta) ifelse(theta < pi/2, theta+2*pi, theta)) %>% scales::rescale(c(0, pi*2))
+deuts_lamanno$pseudotime_angular <- -thetas + 2*pi
+d <- reducedDim(deuts_lamanno, 'rotated') %>% 
+    as_tibble() %>% 
+    setNames(c('x', 'y')) %>%
+    mutate(
+        angular_pseudotime = deuts_lamanno$pseudotime_angular, 
+        angular_pseudotime_binned = cut(angular_pseudotime, breaks = seq(0, 2*pi, length.out = 9), include.lowest = TRUE)
+    ) %>% 
+    group_by(angular_pseudotime_binned) %>% 
+    summarize(mean_x = mean(x), mean_y = mean(y))
+pdf(tempfile())
+plot(reducedDim(deuts_lamanno, 'rotated')[,1], reducedDim(deuts_lamanno, 'rotated')[,2]) 
+points(d$mean_x, d$mean_y) 
+spl_deuts_lamanno <- xspline(d$mean_x, d$mean_y, shape = -0.5, open = FALSE, draw = FALSE) %>% 
+    do.call(cbind, .) %>% 
+    as.data.frame()
+attr(reducedDim(deuts_lamanno, 'rotated'), 'spline') <- spl_deuts_lamanno
+dev.off()
+
+genes <- c('Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1')
+df <- data.frame(
+    cell = deuts_lamanno$Barcode, 
+    annotation  = deuts_lamanno$annotation,
+    pseudotime_angular = deuts_lamanno$pseudotime_angular,
+    x = reducedDim(deuts_lamanno, 'corrected')[, 1],
+    y = reducedDim(deuts_lamanno, 'corrected')[, 2],
+    t(as.matrix(assay(deuts_lamanno, 'logcounts')[genes, ])), 
+    check.names = FALSE
+) %>% 
+    pivot_longer(cols = any_of(genes), names_to = "gene", values_to = "expr") %>% 
+    mutate(gene = factor(gene, genes))
+p <- ggplot(df, aes(x = pseudotime_angular, y = expr, col = gene, group = gene)) + 
+        geom_smooth(method = 'loess', span = 0.45) + 
+        theme_bw() + 
+        labs(x = ' ', y = 'logcounts') +
+        scale_x_continuous(limits = c(0, 2*pi), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi), expand = c(0, 0))
+ggsave('figures/deuts_lamanno_cyclin-temporal-expression_profiles.pdf', w = 9, h = 5)
+```
+
+## Plot expression of cyclins IN GUO (testis) as lineplots
+
+```{r}
+testis <- readRDS('~/Projects/20220315_scRNAseq_testis-Guo/results/testis-Guo.rds')
+genes <- c('CCNO', 'CCNA1', 'CCNB1')
+p <- SCTools::plotEmbedding(testis, by = genes, dim = "TSNE", return_plotlist = TRUE)
+df <- tibble(    
+    x = reducedDim(testis, 'TSNE')[,1], 
+    y = reducedDim(testis, 'TSNE')[,2], 
+    pseudotime = testis$pseudotime,
+    as.data.frame.matrix(t(logcounts(testis[genes,])))
+) %>% pivot_longer(cols = c(-x, -y, -pseudotime), names_to='gene', values_to='expr') %>% mutate(gene = factor(gene, genes))
+p[[length(p) + 1]] <- ggplot(df, aes(x = pseudotime, y = expr, col = gene, group = gene)) + 
+    geom_smooth(method = 'loess', span = 0.3) + 
+    theme_bw() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.ticks.y=element_blank(), 
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    )+
+    scale_x_continuous(expand = c(0, 0))
+p[[length(p) + 1]] <- scater::plotReducedDim(testis, 'TSNE', colour_by = 'annotation', text_by = 'annotation')
+p[[length(p) + 1]] <- scater::plotReducedDim(testis, 'TSNE', colour_by = 'pseudotime')
+p <- cowplot::plot_grid(plotlist = p, align = 'hv', axis = 'tblr')
+ggsave('figures/fig4/testis_cyclins.pdf', height = 12, width = 20)
+
+```
+
+## Dotplot of multiple genes across datasets 
+
+```{r}
+MTEC <- readRDS('~/Projects/20211108_scRNAseq_MTECs_intersection-of-coopted-factors/results/MTEC.rds')
+HAEC <- readRDS('~/Projects/20211109_scRNAseq_HAECs_intersection-of-coopted-factors/results/HAEC.rds')
+LaManno <- readRDS('~/Projects/20211110_scRNAseq_LaManno_intersection-of-coopted-factors/results/LaManno.rds')
+WTs <- readRDS('/home/rsg/Projects/20210421_MCCs_WT-pseudotime/results/WTs-with-pseudotimes_withUnannot.rds')
+theme_opts_UMAP <- theme(
+    text = ggplot2::element_text(size = 8),
+    panel.background = ggplot2::element_rect(fill = NA), 
+    panel.ontop = FALSE, 
+    panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+    aspect.ratio = 1,
+    axis.line = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks.x=element_blank(), 
+    axis.ticks.y=element_blank(), 
+    panel.grid.major = element_line(size = 0.2),
+    panel.grid.minor = element_line(size = 0.1),
+    legend.position = "bottom",
+    axis.title.x = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.title.y = element_text(margin = margin(t = 5, r = 5, b = 5, l = 5)), 
+    strip.switch.pad.grid = unit(0.2, "cm"), 
+    strip.placement = "outside",
+    strip.background = element_rect(fill = NA)
+)
+theme_opts <- theme(
+    panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+    panel.ontop = FALSE,
+    axis.ticks.x=element_blank(), 
+    axis.ticks.y=element_blank(), 
+    panel.grid.major = element_line(size = 0.2),
+    panel.grid.minor = element_line(size = 0.1),
+    text = element_text(size = 12),
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 10, r = 10, b = 10, l = 10)),
+    axis.title.y = element_text(margin = margin(t = 10, r = 10, b = 10, l = 10))
+)
+```
+
+> Plot UMAP of relevant genes
+
+- Cdks, Cyclins, Emi1, Pttg1 
+
+```{r}
+genes = list(
+    "CDK1" = "Cdk1", 
+    "CDK2" = "Cdk2", 
+    "CDK4" = "Cdk4", 
+    "CDK6" = "Cdk6", 
+    "CCNE2" = "Ccne2", 
+    "CCNA2" = "Ccna2", 
+    "CCNO" = "Ccno", 
+    "CCNB1" = "Ccnb1",
+    "CCNA1" = "Ccna1",
+    "PTTG1" = 'Pttg1', 
+    "FBXO5" = 'Fbxo5',
+    "FBXO43" = 'Fbxo43',
+    "GMNC" = 'Gmnc'
+)
+p <- lapply(genes, function(gene) {
+    message(gene)
+    cowplot::plot_grid(
+        tibble(
+            x = reducedDim(WTs, 'UMAP_from_Seurat')[, 1],
+            y = reducedDim(WTs, 'UMAP_from_Seurat')[, 2],
+            annot = WTs$annotation,
+            size = ifelse(annot %in% c('CyclingBasal', 'Basal', 'CyclingProgenitors', 'Progenitors', 'Progenitors_I', 'Progenitors_II', 'Deuterosomal', 'MCCs', 'Suprabasal', 'EarlyMCCs', 'EarlyDeuterosomal', 'LateDeuterosomal'), 1, 0) %>% factor(levels = c(1, 0)), 
+            expr = SCTools::bindByQuantiles(assay(WTs, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+            ) %>% 
+            arrange(expr) %>% 
+            ggplot(aes(x, y, fill = expr, size = size)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, stroke = 0.05, raster.dpi = 200) + 
+            theme_bw() + 
+            theme_opts_UMAP + 
+            theme(legend.position = 'none') +
+            labs(x = '', y = '', title = glue::glue("WTs, {gene}")) +
+            scale_size_manual(values = c(1.5, .4)) +
+            scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'), limits = c(0,3)),
+        tibble(
+            x = reducedDim(LaManno, 'force')[, 1],
+            y = reducedDim(LaManno, 'force')[, 2],
+            annot = LaManno$annotation,
+            size = ifelse(annot %in% c('CyclingBasal', 'Basal', 'CyclingProgenitors', 'Progenitors', 'Progenitors_I', 'Progenitors_II', 'Deuterosomal', 'MCCs', 'Suprabasal', 'EarlyMCCs', 'EarlyDeuterosomal', 'LateDeuterosomal'), 1, 0) %>% factor(levels = c(1, 0)), 
+            expr = SCTools::bindByQuantiles(assay(LaManno, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+            ) %>% 
+            arrange(expr) %>% 
+            ggplot(aes(x, y, fill = expr, size = size)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, stroke = 0.05, raster.dpi = 200) + 
+            theme_bw() + 
+            theme_opts_UMAP + 
+            theme(legend.position = 'none') +
+            labs(x = '', y = '', title = glue::glue("LaManno, {gene}")) +
+            scale_size_manual(values = c(1.5, .4)) +
+            scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'), limits = c(0,3)),
+        tibble(
+            x = reducedDim(MTEC, 'force')[, 1],
+            y = reducedDim(MTEC, 'force')[, 2],
+            annot = MTEC$annotation,
+            size = ifelse(annot %in% c('CyclingBasal', 'Basal', 'CyclingProgenitors', 'Progenitors', 'Progenitors_I', 'Progenitors_II', 'Deuterosomal', 'MCCs', 'Suprabasal', 'EarlyMCCs', 'EarlyDeuterosomal', 'LateDeuterosomal'), 1, 0) %>% factor(levels = c(1, 0)), 
+            expr = SCTools::bindByQuantiles(assay(MTEC, 'logcounts')[gene,], q_low = 0.05/2, q_high = 1-0.05/2)
+            ) %>% 
+            arrange(expr) %>% 
+            ggplot(aes(x, y, fill = expr, size = size)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, stroke = 0.05, raster.dpi = 200) + 
+            theme_bw() + 
+            theme_opts_UMAP + 
+            theme(legend.position = 'none') +
+            labs(x = '', y = '', title = glue::glue("MTEC, {gene}")) +
+            scale_size_manual(values = c(1.5, .4)) +
+            scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'), limits = c(0,3)),
+        tibble(
+            x = reducedDim(HAEC, 'TSNE')[, 1],
+            y = reducedDim(HAEC, 'TSNE')[, 2],
+            annot = HAEC$annotation,
+            size = ifelse(annot %in% c('CyclingBasal', 'Basal', 'CyclingProgenitors', 'Progenitors', 'Progenitors_I', 'Progenitors_II', 'Deuterosomal', 'MCCs', 'Suprabasal', 'EarlyMCCs', 'EarlyDeuterosomal', 'LateDeuterosomal'), 1, 0) %>% factor(levels = c(1, 0)), 
+            expr = SCTools::bindByQuantiles(assay(HAEC, 'logcounts')[names(genes)[genes == gene],], q_low = 0.05/2, q_high = 1-0.05/2)
+            ) %>% 
+            arrange(expr) %>% 
+            ggplot(aes(x, y, fill = expr, size = size)) + 
+            ggrastr::geom_point_rast(shape = 21, alpha = 0.5, stroke = 0.05, raster.dpi = 200) + 
+            theme_bw() + 
+            theme_opts_UMAP + 
+            theme(legend.position = 'none') +
+            labs(x = '', y = '', title = glue::glue("HAEC, {names(genes)[genes == gene]}")) +
+            scale_size_manual(values = c(1.5, .4)) +
+            scale_fill_gradientn(colours = c('#fce7c0', '#fcd286', '#f5bf5c', '#ff9810', '#a80000', '#701511'), limits = c(0,3)),
+        nrow = 1, align = 'hv', axis = 'tblr'
+    )
+}) %>% cowplot::plot_grid(plotlist = ., ncol = 1, align = 'hv', axis = 'tblr')
+ggsave('figures/fig3/other-scRNAseq_some-genes.pdf', h = 5*length(genes), w = 20, limitsize = FALSE)
+```
+
+> Plot dotplot heatmaps of relevant genes
+
+- Cdks, Cyclins, Emi1, Pttg1 
+
+```{r}
+genes = list(
+    "CDK1" = "Cdk1", 
+    "CDK2" = "Cdk2", 
+    "CDK4" = "Cdk4", 
+    "CDK6" = "Cdk6", 
+    "CCNE2" = "Ccne2", 
+    "CCNA2" = "Ccna2", 
+    "CCNO" = "Ccno", 
+    "CCNB1" = "Ccnb1",
+    "CCNB2" = "Ccnb2",
+    "CCNA1" = "Ccna1",
+    "PTTG1" = 'Pttg1', 
+    "FBXO5" = 'Fbxo5',
+    "FBXO43" = 'Fbxo43',
+    "GMNC" = 'Gmnc'
+)
+colnames(WTs) <- WTs$Barcode
+colnames(MTEC) <- MTEC$Barcode
+HAEC$Barcode <- colnames(HAEC)
+p <- cowplot::plot_grid(plotlist = list(
+    assay(WTs, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = WTs$Barcode, annot = WTs$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        ggplot(aes(x = annot, y = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('WTs') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(LaManno, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = LaManno$Barcode, annot = LaManno$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        ggplot(aes(x = annot, y = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('LaManno') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(MTEC, 'logcounts')[unlist(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = MTEC$Barcode, annot = MTEC$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, unlist(genes))) %>%
+        ggplot(aes(x = annot, y = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('MTEC') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)), 
+    assay(HAEC, 'logcounts')[names(genes), ] %>% 
+        as.matrix() %>%
+        as_tibble(rownames = 'gene') %>%  
+        pivot_longer(-gene, names_to = 'cell', values_to = 'expr') %>% 
+        left_join(tibble(cell = HAEC$Barcode, annot = HAEC$annotation), by = 'cell') %>%
+        filter(annot != 'Unannot') %>%
+        mutate(gene = factor(gene, unique(gene))) %>%
+        group_by(gene, annot) %>% 
+        summarize(meanexpr = mean(expr, na.rm = TRUE), pct = sum(expr > 0)/sum(expr>=0)) %>%
+        mutate(gene = factor(gene, names(genes))) %>%
+        ggplot(aes(x = annot, y = gene, size = pct, fill = meanexpr)) +
+        geom_point(shape = 21, col = '#00000021') + 
+        ggtitle('HAEC') + 
+        scale_size_continuous(range = c(0.3, 3)) +
+        scale_fill_distiller(palette = 'YlOrRd', direction = 1) + 
+        scale_alpha_continuous(range = c(0.3, 1)) + 
+        theme_bw(base_size = 8) + theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    ), 
+    ncol = 1, align = 'hv', axis = 'tblr'
+)
+ggsave('figures/fig3/other-scRNAseq_some-genes_dotplots.pdf', w = 7, h = 8, limitsize = FALSE)
+```
+
+> Extra plots for CDK expression in cycles
+
+```{r cyclins 1}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+genes <- c('Cdk1', 'Cdk2', 'Cdk4', 'Cdk6')
+df <- rbind(
+    tibble(    
+        x = reducedDim(cyc, 'rotated')[,1], 
+        y = reducedDim(cyc, 'rotated')[,2], 
+        theta = cyc$pseudotime_angular,
+        class = factor('cyc', c('cyc', 'deuts')),
+        as_tibble(as.matrix(t(logcounts(cyc[genes,]))))
+    ) %>% pivot_longer(cols = c(-x, -y, -theta, -class), names_to='gene', values_to='expr') %>% mutate(gene = factor(gene, genes)),
+    tibble(    
+        x = reducedDim(deuts, 'rotated')[,1], 
+        y = reducedDim(deuts, 'rotated')[,2], 
+        theta = deuts$pseudotime_angular,
+        class = factor('deuts', c('cyc', 'deuts')),
+        as_tibble(as.matrix(t(logcounts(deuts[genes,]))))
+    ) %>% pivot_longer(cols = c(-x, -y, -theta, -class), names_to='gene', values_to='expr') %>% mutate(gene = factor(gene, genes))
+)
+p1 <- ggplot(df, aes(x = theta, y = expr, fill = gene, col = gene, group = gene)) + 
+    geom_point(alpha = 0.2) + 
+    geom_smooth(method = 'loess', span = 0.3) + 
+    xlim(c(0, 2*pi)) + 
+    theme_bw() + 
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    )+
+    facet_wrap('class', ncol = 2) + 
+    scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi))
+
+
+CellCyclePhase_hNSCs <- readRDS('/home/rsg/Projects/20211029_ccAF_cellcyle-annotations/results/CellCyclePhase_hNSCs.rds')
+labels <- c(
+    'Neural G0' = 'G0', 
+    'G1' = 'G1', 
+    'G1/other' = 'G1', 
+    'Late G1' = 'G1', 
+    'S' = 'S', 
+    'S/G2' = 'S/G2', 
+    'G2/M' = 'G2/M',
+    'M/Early G1' = 'M'
+)
+cyc$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(cyc$Barcode, CellCyclePhase_hNSCs$Barcode)]
+cyc$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(cyc$CellCyclePhase_hNSCs)], unique(labels))
+deuts$CellCyclePhase_hNSCs <- CellCyclePhase_hNSCs$CellCyclePhase_hNSCs[match(deuts$Barcode, CellCyclePhase_hNSCs$Barcode)]
+deuts$CellCyclePhase_hNSCs_hierarchy_1 <- factor(labels[as.character(deuts$CellCyclePhase_hNSCs)], unique(labels))
+
+df <- rbind(
+    tibble(    
+        CC = cyc$CellCyclePhase_hNSCs_hierarchy_1,
+        theta = cyc$pseudotime_angular, 
+        type = 'cyc'
+    ),
+    tibble(    
+        CC = deuts$CellCyclePhase_hNSCs_hierarchy_1,
+        theta = deuts$pseudotime_angular, 
+        type = 'deuts'
+    )
+)
+df$CC[df$CC == 'G0'] <- 'G1'
+p2 <- ggplot(df, aes(fill = CC)) + 
+    geom_density(aes(x = theta, y = ..count../n), col = NA, alpha = 0.6) + 
+    scale_color_manual(values = c('#c430e9', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    scale_fill_manual(values = c('#c430e9', '#e9aa35', '#c8e935', '#29b385', '#2970b3')) + 
+    facet_grid(~type) + 
+    theme_bw() +
+    theme(
+        text = ggplot2::element_text(size = 12),
+        panel.background = ggplot2::element_rect(fill = NA), 
+        panel.ontop = FALSE, 
+        panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+        axis.line = element_blank(),
+        panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+        panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+        legend.position = "bottom",
+        strip.switch.pad.grid = unit(0.2, "cm"), 
+        strip.placement = "outside",
+        strip.background = element_rect(fill = NA)
+    ) +
+    coord_cartesian(ylim = c(0, 2), expand = FALSE) + 
+    scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi))
+
+p <- cowplot::plot_grid(p1, p2, align = 'hv', axis = 'tblr', nrow = 2)
+ggsave('figures/extra/cyc-deuts_CDKs-expression_profiles2.pdf', w = 15, h = 10)
+```
+
+## Plot temporal expression of cyclins as a gradient, but in polar coordinates
+
+```{r cyclins 2}
+cyc <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/cyc_with-angular-pseudotime_2021-09-08.rds')
+deuts <- readRDS('/home/rsg/Projects/20210505_MCC_transcriptional-acceleration/results/deuts_with-angular-pseudotime_2021-09-08.rds')
+exprs <- readRDS('/home/rsg/Projects/20210707_scRNAseq_subcycles_gene-module-expression/results/cyc-deuts_exprs.rds')
+
+cyclins <- c('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'Ccnd2', 'Ccne2', 'Ccna2', 'Ccnb1')
+p <- exprs %>% 
+        filter(gene %in% cyclins) %>%
+        filter(cells == 'cyc') %>% 
+        mutate(gene = factor(gene, cyclins)) %>% 
+        mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr))) %>% 
+        group_by(gene) %>% 
+        mutate(expr = scales::rescale(expr, c(0, 1))) %>%
+        ggplot(aes(x = pseudotime, y = gene, fill = gene, alpha = expr)) + 
+        ggrastr::geom_tile_rast() + 
+        theme_bw(base_size = 8) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA)
+        )+
+        scale_fill_manual(values = scales::hue_pal()(7)[c(1, 2, 5, 6)]) + 
+        scale_alpha_continuous(range = c(0, 1)) +
+        scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+        scale_y_discrete(limits = cyclins) + 
+        labs(x = '', y = '') + 
+        coord_polar()
+ggsave('figures/model/cyclin-expressions-radio_CYC.pdf')
+
+cyclins <- c('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'Ccnd2', 'Ccno', 'Ccna1', 'Ccnb1')
+p <- exprs %>% 
+        filter(gene %in% cyclins) %>%
+        filter(cells == 'deuts') %>% 
+        mutate(gene = factor(gene, cyclins)) %>% 
+        mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr))) %>% 
+        group_by(gene) %>% 
+        mutate(expr = scales::rescale(expr, c(0, 1))) %>%
+        ggplot(aes(x = pseudotime, y = gene, fill = gene, alpha = expr)) + 
+        ggrastr::geom_tile_rast() + 
+        theme_bw(base_size = 8) + 
+        theme(
+            text = ggplot2::element_text(size = 12),
+            panel.background = ggplot2::element_rect(fill = NA), 
+            panel.ontop = FALSE, 
+            panel.border = element_rect(fill = NA, colour = 'black', size = 0.5),
+            axis.line = element_blank(),
+            axis.ticks.x=element_blank(), 
+            axis.ticks.y=element_blank(), 
+            panel.grid.major = element_line(size = 0.1, colour = '#e6e6e6'),
+            panel.grid.minor = element_line(size = 0.05, colour = '#e6e6e6'),
+            strip.switch.pad.grid = unit(0.2, "cm"), 
+            strip.placement = "outside",
+            strip.background = element_rect(fill = NA)
+        )+
+        scale_fill_manual(values = scales::hue_pal()(7)[c(1, 3, 4, 6)]) + 
+        scale_alpha_continuous(range = c(0, 1)) +
+        scale_x_continuous(limits = c(0, 2*pi), expand = c(0, 0), labels = scales::math_format(.x * pi, format = function(x) x / pi), breaks = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4, 2*pi)) +
+        scale_y_discrete(limits = cyclins) + 
+        labs(x = '', y = '') + 
+        coord_polar()
+ggsave('figures/model/cyclin-expressions-radio_DEUTS.pdf')
+```
